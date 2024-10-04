@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">pawsome-pals</string>
+    <string name="default_web_client_id">455388576182-nb7hkru3benl1qe38epcccjd0kurebtl.apps.googleusercontent.com</string>
+    <string name="facebook_app_id">527141699750137</string>
+    <string name="fb_login_protocol_scheme">fb527141699750137</string>
+    <string name="facebook_client_token">5f8a74941436f7da5230b70876731479</string>
+
+</resources>
