@@ -26,7 +26,8 @@ fun AppNavigation(
     ratingViewModel: RatingViewModel,
     notificationViewModel: NotificationViewModel,
     swipingViewModel: SwipeViewModel,
-    trainerTipsViewModel: TrainerTipsViewModel
+    trainerTipsViewModel: TrainerTipsViewModel,
+    questionnaireViewModel: QuestionnaireViewModel
 ) {
     val navController = rememberNavController()
     val currentUser by authViewModel.currentUser.collectAsState()
@@ -114,9 +115,12 @@ fun AppNavigation(
         }
 
         composable("questionnaire") {
+            val userId = authViewModel.currentUser.value?.id ?: return@composable
             QuestionnaireScreen(
-                onComplete = { answers ->
-                    authViewModel.submitQuestionnaire(answers)
+                viewModel = questionnaireViewModel,
+                userId = userId,
+                onComplete = {
+                    authViewModel.setQuestionnaireCompleted(true)
                     navController.navigate("main_screen") {
                         popUpTo("login") { inclusive = true }
                     }
@@ -220,6 +224,20 @@ fun AppNavigation(
 
         composable("settings") {
             SettingsScreen(navController = navController)
+        }
+
+        composable("questionnaire") {
+            val userId = authViewModel.currentUser.value?.id ?: return@composable
+            QuestionnaireScreen(
+                viewModel = questionnaireViewModel,
+                userId = userId,
+                onComplete = {
+                    authViewModel.setQuestionnaireCompleted(true)
+                    navController.navigate("main_screen") {
+                        popUpTo("login") { inclusive = true }
+                    }
+                }
+            )
         }
 
         composable("notification_preferences") {

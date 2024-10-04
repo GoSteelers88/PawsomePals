@@ -33,4 +33,8 @@ interface UserDao {
 
     @Query("UPDATE users SET dailyQuestionCount = 0")
     suspend fun resetAllDailyQuestionCounts()
+
+    interface UserDao {
+        @Query("UPDATE users SET hasCompletedQuestionnaire = :completed WHERE id = :userId")
+        suspend fun updateUserQuestionnaireStatus(userId: String, completed: Boolean)
 }

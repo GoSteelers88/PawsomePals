@@ -293,6 +293,10 @@ class UserRepository(
             // Also update Firebase if needed
         }
     }
+    suspend fun updateUserQuestionnaireStatus(userId: String, completed: Boolean) {
+        userDao.updateUserQuestionnaireStatus(userId, completed)
+        firebaseRef.child("users").child(userId).child("hasCompletedQuestionnaire").setValue(completed)
+    }
 
     suspend fun getCurrentUserDog(): DogProfile? {
         return withContext(Dispatchers.IO) {

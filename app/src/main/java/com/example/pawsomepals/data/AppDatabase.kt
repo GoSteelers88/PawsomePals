@@ -1,5 +1,6 @@
 package com.example.pawsomepals.data
 
+
 import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
@@ -28,6 +29,7 @@ import com.example.pawsomepals.data.model.Settings
 import com.example.pawsomepals.data.model.Swipe
 import com.example.pawsomepals.data.model.Timeslot
 import com.example.pawsomepals.data.model.User
+import com.example.pawsomepals.data.model.QuestionnaireResponse
 
 @Database(
     entities = [
@@ -41,9 +43,10 @@ import com.example.pawsomepals.data.model.User
         PhotoEntity::class,
         Chat::class,
         Message::class,
-        Rating::class
+        Rating::class,
+        QuestionnaireResponse::class
     ],
-    version = 13,
+    version = 15,
     exportSchema = true
 )
 @TypeConverters(IntListConverter::class, LongListConverter::class, LocalDateConverter::class, Converters::class)

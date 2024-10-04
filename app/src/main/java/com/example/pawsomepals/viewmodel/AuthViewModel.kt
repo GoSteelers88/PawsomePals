@@ -59,6 +59,11 @@ class AuthViewModel @Inject constructor(
     private val _hasCompletedQuestionnaire = MutableStateFlow(false)
     val hasCompletedQuestionnaire: StateFlow<Boolean> = _hasCompletedQuestionnaire.asStateFlow()
 
+
+
+
+
+
     init {
         auth.currentUser?.let { firebaseUser ->
             viewModelScope.launch {
@@ -69,6 +74,13 @@ class AuthViewModel @Inject constructor(
         }
     }
 
+
+    fun setQuestionnaireCompleted(completed: Boolean) {
+        viewModelScope.launch {
+            _hasCompletedQuestionnaire.value = completed
+            // You might want to save this state to SharedPreferences or your backend
+        }
+    }
 
 
     fun loginUser(email: String, password: String, onSuccess: () -> Unit, onError: (String) -> Unit) {

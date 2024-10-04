@@ -1,7 +1,9 @@
 package com.example.pawsomepals.data.repository
 
+
 import com.example.pawsomepals.data.dao.QuestionDao
 import com.example.pawsomepals.data.model.Question
+import com.example.pawsomepals.data.model.QuestionnaireResponse
 import com.google.firebase.database.DatabaseReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -29,6 +31,10 @@ class QuestionRepository(
             // Save to Firebase
             firebaseRef.child("questions").child(questionId).setValue(newQuestion).await()
         }
+    }
+
+    private fun sanitizeKey(key: String): String {
+        return key.replace(Regex("[.#$\\[\\]/]"), "_")
     }
 
     suspend fun getQuestionsByUser(userId: String): List<Question> {
@@ -65,6 +71,44 @@ class QuestionRepository(
         withContext(Dispatchers.IO) {
             questionDao.deleteQuestion(questionId)
             firebaseRef.child("questions").child(questionId).removeValue().await()
+        }
+    }
+
+    // New functions for handling questionnaire responses
+    suspend fun saveQuestionnaireResponse(response: QuestionnaireResponse) {
+        withContext(Dispatchers.IO) {
+            // Save to local database
+            questionDao.insertQuestionnaireResponse(response)
+
+            // Sanitize keys for Firebase
+            val sanitizedResponses = response.responses.mapKeys { sanitizeKey(it.key) }
+
+            // Save to Firebase
+            firebaseRef.child("questionnaire_responses").child(response.userId)
+                .setValue(response.copy(responses = sanitizedResponses)).await()
+        }
+    }
+
+    suspend fun getQuestionnaireResponse(userId: String): QuestionnaireResponse? {
+        return withContext(Dispatchers.IO) {
+            var response = questionDao.getQuestionnaireResponse(userId)
+
+            if (response == null) {
+                val firebaseResponse = firebaseRef.child("questionnaire_responses").child(userId)
+                    .get()
+                    .await()
+                    .getValue(QuestionnaireResponse::class.java)
+
+                response = firebaseResponse?.let {
+                    it.copy(responses = it.responses.mapKeys { entry ->
+                        entry.key.replace("_", "/")
+                    })
+                }
+
+                response?.let { questionDao.insertQuestionnaireResponse(it) }
+            }
+
+            response
         }
     }
 }

@@ -17,6 +17,7 @@ import com.example.pawsomepals.viewmodel.NotificationViewModel
 import com.example.pawsomepals.viewmodel.PhotoManagementViewModel
 import com.example.pawsomepals.viewmodel.PlaydateViewModel
 import com.example.pawsomepals.viewmodel.ProfileViewModel
+import com.example.pawsomepals.viewmodel.QuestionnaireViewModel
 import com.example.pawsomepals.viewmodel.RatingViewModel
 import com.example.pawsomepals.viewmodel.SettingsViewModel
 import com.example.pawsomepals.viewmodel.SwipeViewModel
@@ -42,6 +43,8 @@ class MainActivity : ComponentActivity() {
     private val notificationViewModel by viewModels<NotificationViewModel>()
     private val swipingViewModel by viewModels<SwipeViewModel>()
     private val trainerTipsViewModel by viewModels<TrainerTipsViewModel>()
+    private val questionnaireViewModel: QuestionnaireViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -63,7 +66,8 @@ class MainActivity : ComponentActivity() {
                         ratingViewModel = ratingViewModel,
                         notificationViewModel = notificationViewModel,
                         swipingViewModel = swipingViewModel,
-                        trainerTipsViewModel = trainerTipsViewModel
+                        trainerTipsViewModel = trainerTipsViewModel,
+                        questionnaireViewModel = questionnaireViewModel
                     )
                 }
             }
