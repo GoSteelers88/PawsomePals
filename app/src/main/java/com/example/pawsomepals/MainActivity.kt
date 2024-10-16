@@ -21,6 +21,7 @@ import com.example.pawsomepals.viewmodel.QuestionnaireViewModel
 import com.example.pawsomepals.viewmodel.RatingViewModel
 import com.example.pawsomepals.viewmodel.SettingsViewModel
 import com.example.pawsomepals.viewmodel.SwipeViewModel
+import com.example.pawsomepals.viewmodel.SwipingViewModel
 import com.example.pawsomepals.viewmodel.TrainerTipsViewModel
 import com.example.pawsomepals.viewmodel.ViewModelFactory
 import dagger.hilt.android.AndroidEntryPoint
@@ -41,7 +42,7 @@ class MainActivity : ComponentActivity() {
     private val photoManagementViewModel by viewModels<PhotoManagementViewModel>()
     private val ratingViewModel by viewModels<RatingViewModel>()
     private val notificationViewModel by viewModels<NotificationViewModel>()
-    private val swipingViewModel by viewModels<SwipeViewModel>()
+    private val swipingViewModel by viewModels<SwipingViewModel>()
     private val trainerTipsViewModel by viewModels<TrainerTipsViewModel>()
     private val questionnaireViewModel: QuestionnaireViewModel by viewModels()
 

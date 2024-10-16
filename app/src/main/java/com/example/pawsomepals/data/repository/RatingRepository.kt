@@ -1,7 +1,8 @@
 package com.example.pawsomepals.data.repository
 
 import com.example.pawsomepals.data.model.Rating
-import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Query
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.tasks.await
@@ -11,45 +12,45 @@ import javax.inject.Singleton
 
 @Singleton
 class RatingRepository @Inject constructor(
-    private val firebaseDatabase: FirebaseDatabase
+    private val firestore: FirebaseFirestore
 ) {
-    private val ratingsRef = firebaseDatabase.getReference("ratings")
+    private val ratingsCollection = firestore.collection("ratings")
 
     suspend fun submitRating(rating: Rating): Rating {
         val newRatingId = UUID.randomUUID().toString()
         val newRating = rating.copy(id = newRatingId)
-        ratingsRef.child(newRatingId).setValue(newRating).await()
+        ratingsCollection.document(newRatingId).set(newRating).await()
         return newRating
     }
 
     fun getRating(ratingId: String): Flow<Rating?> = flow {
-        val snapshot = ratingsRef.child(ratingId).get().await()
-        emit(snapshot.getValue(Rating::class.java))
+        val snapshot = ratingsCollection.document(ratingId).get().await()
+        emit(snapshot.toObject(Rating::class.java))
     }
 
     suspend fun updateRating(rating: Rating) {
-        ratingsRef.child(rating.id).setValue(rating).await()
+        ratingsCollection.document(rating.id).set(rating).await()
     }
 
     suspend fun deleteRating(ratingId: String) {
-        ratingsRef.child(ratingId).removeValue().await()
+        ratingsCollection.document(ratingId).delete().await()
     }
 
     fun getUserRatings(userId: String): Flow<List<Rating>> = flow {
-        val snapshot = ratingsRef.orderByChild("userId").equalTo(userId).get().await()
-        val ratings = snapshot.children.mapNotNull { it.getValue(Rating::class.java) }
+        val snapshot = ratingsCollection.whereEqualTo("userId", userId).get().await()
+        val ratings = snapshot.toObjects(Rating::class.java)
         emit(ratings)
     }
 
     fun getRaterRatings(raterId: String): Flow<List<Rating>> = flow {
-        val snapshot = ratingsRef.orderByChild("raterId").equalTo(raterId).get().await()
-        val ratings = snapshot.children.mapNotNull { it.getValue(Rating::class.java) }
+        val snapshot = ratingsCollection.whereEqualTo("raterId", raterId).get().await()
+        val ratings = snapshot.toObjects(Rating::class.java)
         emit(ratings)
     }
 
     suspend fun getAverageRating(userId: String): Double {
-        val snapshot = ratingsRef.orderByChild("userId").equalTo(userId).get().await()
-        val ratings = snapshot.children.mapNotNull { it.getValue(Rating::class.java) }
+        val snapshot = ratingsCollection.whereEqualTo("userId", userId).get().await()
+        val ratings = snapshot.toObjects(Rating::class.java)
         return if (ratings.isNotEmpty()) {
             ratings.map { it.score }.average()
         } else {

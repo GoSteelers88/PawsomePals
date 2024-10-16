@@ -1,36 +1,26 @@
 package com.example.pawsomepals.ui.theme
 
+import android.content.IntentSender
 import android.util.Patterns
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.pawsomepals.R
+import kotlinx.coroutines.delay
 
 @Composable
 fun LoginScreen(
@@ -38,6 +28,8 @@ fun LoginScreen(
     onRegisterClick: () -> Unit,
     onGoogleSignInClick: () -> Unit,
     onFacebookSignInClick: () -> Unit,
+    onGoogleSignInIntentReceived: (IntentSender) -> Unit,
+    googleSignInIntent: IntentSender?,
     isLoading: Boolean = false,
     errorMessage: String? = null
 ) {
@@ -47,11 +39,31 @@ fun LoginScreen(
     var isPasswordError by remember { mutableStateOf(false) }
     var emailErrorMessage by remember { mutableStateOf("") }
     var passwordErrorMessage by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
+    var showSuccessMessage by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val scrollState = rememberScrollState()
+
+    LaunchedEffect(googleSignInIntent) {
+        googleSignInIntent?.let { intentSender ->
+            onGoogleSignInIntentReceived(intentSender)
+        }
+    }
+
+    LaunchedEffect(isLoading) {
+        if (!isLoading && errorMessage == null) {
+            showSuccessMessage = true
+            delay(2000)
+            showSuccessMessage = false
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(16.dp)
+            .verticalScroll(scrollState),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -72,7 +84,9 @@ fun LoginScreen(
             label = { Text("Email") },
             isError = isEmailError,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "Email Input Field" },
             singleLine = true
         )
         if (isEmailError) {
@@ -95,10 +109,20 @@ fun LoginScreen(
             },
             label = { Text("Password") },
             isError = isPasswordError,
-            visualTransformation = PasswordVisualTransformation(),
+            visualTransformation = if (showPassword) PasswordVisualTransformation() else PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "Password Input Field" },
+            singleLine = true,
+            trailingIcon = {
+                IconButton(onClick = { showPassword = !showPassword }) {
+                    Icon(
+                        painter = painterResource(id = if (showPassword) R.drawable.ic_visibility_off else R.drawable.ic_visibility),
+                        contentDescription = if (showPassword) "Hide password" else "Show password"
+                    )
+                }
+            }
         )
         if (isPasswordError) {
             Text(
@@ -135,7 +159,8 @@ fun LoginScreen(
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(50.dp),
+                .height(50.dp)
+                .semantics { contentDescription = "Login Button" },
             enabled = !isLoading
         ) {
             if (isLoading) {
@@ -159,10 +184,13 @@ fun LoginScreen(
         Spacer(modifier = Modifier.height(16.dp))
 
         Button(
-            onClick = onGoogleSignInClick,
+            onClick = {
+                onGoogleSignInClick()
+            },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(50.dp),
+                .height(50.dp)
+                .semantics { contentDescription = "Sign in with Google Button" },
             enabled = !isLoading
         ) {
             Icon(
@@ -180,7 +208,8 @@ fun LoginScreen(
             onClick = onFacebookSignInClick,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(50.dp),
+                .height(50.dp)
+                .semantics { contentDescription = "Sign in with Facebook Button" },
             enabled = !isLoading
         ) {
             Icon(
@@ -194,17 +223,21 @@ fun LoginScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        errorMessage?.let {
+        AnimatedVisibility(visible = errorMessage != null || showSuccessMessage) {
             Text(
-                text = it,
-                color = MaterialTheme.colorScheme.error,
+                text = if (showSuccessMessage) "Login Successful!" else errorMessage ?: "",
+                color = if (showSuccessMessage) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center
             )
-            Spacer(modifier = Modifier.height(16.dp))
         }
 
-        TextButton(onClick = onRegisterClick) {
+        Spacer(modifier = Modifier.height(16.dp))
+
+        TextButton(
+            onClick = onRegisterClick,
+            modifier = Modifier.semantics { contentDescription = "Register Button" }
+        ) {
             Text("Don't have an account? Register")
         }
     }

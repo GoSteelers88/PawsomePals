@@ -2,11 +2,8 @@ package com.example.pawsomepals.data.repository
 
 import com.example.pawsomepals.data.model.Chat
 import com.example.pawsomepals.data.model.Message
-import com.google.firebase.database.DataSnapshot
-import com.google.firebase.database.DatabaseError
-import com.google.firebase.database.FirebaseDatabase
-import com.google.firebase.database.ValueEventListener
-import com.google.firebase.database.ktx.getValue
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Query
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -14,55 +11,55 @@ import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 
 class ChatRepository @Inject constructor(
-    private val database: FirebaseDatabase
+    private val firestore: FirebaseFirestore
 ) {
-    private val chatsRef = database.getReference("chats")
-    private val messagesRef = database.getReference("messages")
+    private val chatsCollection = firestore.collection("chats")
+    private val messagesCollection = firestore.collection("messages")
 
     fun getChats(userId: String): Flow<List<Chat>> = callbackFlow {
-        val listener = chatsRef.orderByChild("user1Id").equalTo(userId).addValueEventListener(
-            object : ValueEventListener {
-                override fun onDataChange(snapshot: DataSnapshot) {
-                    val chats = snapshot.children.mapNotNull { it.getValue<Chat>() }
-                    trySend(chats)
+        val listener = chatsCollection
+            .whereEqualTo("user1Id", userId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
                 }
-
-                override fun onCancelled(error: com.google.firebase.database.DatabaseError) {
-                    close(error.toException())
-                }
+                val chats = snapshot?.toObjects(Chat::class.java) ?: emptyList()
+                trySend(chats)
             }
-        )
 
-        awaitClose { chatsRef.removeEventListener(listener) }
+        awaitClose { listener.remove() }
     }
 
     fun getMessages(chatId: String): Flow<List<Message>> = callbackFlow {
-        val listener = messagesRef.child(chatId).orderByChild("timestamp").addValueEventListener(
-            object : ValueEventListener {
-                override fun onDataChange(snapshot: DataSnapshot) {
-                    val messages = snapshot.children.mapNotNull { it.getValue<Message>() }
-                    trySend(messages)
+        val listener = messagesCollection
+            .whereEqualTo("chatId", chatId)
+            .orderBy("timestamp", Query.Direction.ASCENDING)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
                 }
-
-                override fun onCancelled(error: DatabaseError) {
-                    close(error.toException())
-                }
+                val messages = snapshot?.toObjects(Message::class.java) ?: emptyList()
+                trySend(messages)
             }
-        )
 
-        awaitClose { messagesRef.child(chatId).removeEventListener(listener) }
+        awaitClose { listener.remove() }
     }
 
     suspend fun sendMessage(chatId: String, senderId: String, content: String) {
         val message = Message(
             chatId = chatId,
             senderId = senderId,
-            content = content
+            content = content,
+            timestamp = System.currentTimeMillis()
         )
-        messagesRef.child(chatId).push().setValue(message).await()
+
+        // Add message to Firestore
+        messagesCollection.add(message).await()
 
         // Update last message in chat
-        chatsRef.child(chatId).updateChildren(
+        chatsCollection.document(chatId).update(
             mapOf(
                 "lastMessageTimestamp" to message.timestamp,
                 "lastMessagePreview" to message.content
@@ -72,8 +69,7 @@ class ChatRepository @Inject constructor(
 
     suspend fun createChat(user1Id: String, user2Id: String): String {
         val chat = Chat(user1Id = user1Id, user2Id = user2Id)
-        val chatRef = chatsRef.push()
-        chatRef.setValue(chat).await()
-        return chatRef.key ?: throw IllegalStateException("Failed to create chat")
+        val docRef = chatsCollection.add(chat).await()
+        return docRef.id
     }
 }

@@ -29,24 +29,51 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.example.pawsomepals.R
+import com.example.pawsomepals.viewmodel.ChatViewModel
+import com.example.pawsomepals.viewmodel.DogProfileViewModel
+import com.example.pawsomepals.viewmodel.HealthAdvisorViewModel
+import com.example.pawsomepals.viewmodel.NotificationViewModel
+import com.example.pawsomepals.viewmodel.PhotoManagementViewModel
+import com.example.pawsomepals.viewmodel.PlaydateViewModel
+import com.example.pawsomepals.viewmodel.ProfileViewModel
+import com.example.pawsomepals.viewmodel.RatingViewModel
+import com.example.pawsomepals.viewmodel.SettingsViewModel
+import com.example.pawsomepals.viewmodel.SwipingViewModel
+import com.example.pawsomepals.viewmodel.TrainerTipsViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
     navController: NavController,
-    onProfileClick: () -> Unit,
+    username: String,
+    profileViewModel: ProfileViewModel,
+    dogProfileViewModel: DogProfileViewModel,
+    playdateViewModel: PlaydateViewModel,
+    chatViewModel: ChatViewModel,
+    healthAdvisorViewModel: HealthAdvisorViewModel,
+    settingsViewModel: SettingsViewModel,
+    photoManagementViewModel: PhotoManagementViewModel,
+    ratingViewModel: RatingViewModel,
+    notificationViewModel: NotificationViewModel,
+    swipingViewModel: SwipingViewModel,
+    trainerTipsViewModel: TrainerTipsViewModel,
+    onLogout: () -> Unit,
+    onProfileClick: (String) -> Unit,
     onDogProfileClick: () -> Unit,
+    onPlaydateClick: (String) -> Unit,
+    onChatClick: (String) -> Unit,
+    onHealthAdvisorClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+    onPhotoManagementClick: () -> Unit,
+    onRatingClick: () -> Unit,
+    onNotificationsClick: () -> Unit,
+    onSwipeClick: () -> Unit,
+    onTrainerTipsClick: () -> Unit,
     onSwipeScreenClick: () -> Unit,
     onChatListClick: () -> Unit,
     onSchedulePlaydateClick: () -> Unit,
     onPlaydateRequestsClick: () -> Unit,
-    onTrainerClick: () -> Unit,
-    onHealthAdvisorClick: () -> Unit,
-    onPhotoManagementClick: () -> Unit,
-    onRatingClick: () -> Unit,
-    onNotificationsClick: () -> Unit,
-    onSettingsClick: () -> Unit,
-    username: String
+    onTrainerClick: () -> Unit
 ) {
     var showLogoutDialog by remember { mutableStateOf(false) }
 
@@ -55,10 +82,10 @@ fun MainScreen(
             TopAppBar(
                 title = { Text("Pawsome Pals!") },
                 actions = {
-                    IconButton(onClick = onSwipeScreenClick) {
+                    IconButton(onClick = onSwipeClick) {
                         Icon(painter = painterResource(id = R.drawable.ic_swipe), contentDescription = "Swipe Screen")
                     }
-                    IconButton(onClick = onProfileClick) {
+                    IconButton(onClick = { onProfileClick("") }) {
                         Icon(painter = painterResource(id = R.drawable.ic_profile), contentDescription = "User Profile")
                     }
                     IconButton(onClick = onNotificationsClick) {
@@ -75,10 +102,10 @@ fun MainScreen(
                 IconButton(onClick = onDogProfileClick) {
                     Icon(painter = painterResource(id = R.drawable.ic_dog), contentDescription = "Dog Profile")
                 }
-                IconButton(onClick = onChatListClick) {
+                IconButton(onClick = { onChatClick("") }) {
                     Icon(painter = painterResource(id = R.drawable.ic_chat), contentDescription = "Chat List")
                 }
-                IconButton(onClick = onSchedulePlaydateClick) {
+                IconButton(onClick = { onPlaydateClick("") }) {
                     Icon(painter = painterResource(id = R.drawable.ic_calendar), contentDescription = "Schedule Playdate")
                 }
                 IconButton(onClick = onPhotoManagementClick) {

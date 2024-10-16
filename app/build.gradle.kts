@@ -115,6 +115,7 @@ dependencies {
     implementation(libs.androidx.runtime.livedata)
     implementation(libs.gson)
     implementation(libs.recaptcha)
+    implementation (libs.androidx.material.icons.extended)
 
     // Retrofit
     implementation(libs.retrofit)

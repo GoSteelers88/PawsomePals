@@ -13,6 +13,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -22,13 +23,20 @@ import com.example.pawsomepals.viewmodel.ProfileViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProfileScreen(viewModel: ProfileViewModel, onBackClick: () -> Unit) {
+fun ProfileScreen(viewModel: ProfileViewModel,
+                  userId: String,
+                  onBackClick: () -> Unit
+) {
     val userProfile by viewModel.userProfile.collectAsState()
     val dogProfile by viewModel.dogProfile.collectAsState()
+    LaunchedEffect(userId) {
+        viewModel.loadProfileById(userId)
+    }
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("Profile") },
+            TopAppBar(
+                title = { Text("Profile") },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
                         DirectionalIcon(contentDescription = "Back")

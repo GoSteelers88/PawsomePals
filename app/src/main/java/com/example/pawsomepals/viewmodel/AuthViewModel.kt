@@ -1,6 +1,5 @@
 package com.example.pawsomepals.viewmodel
 
-import android.app.Application
 import android.content.Intent
 import android.content.IntentSender
 import androidx.lifecycle.ViewModel
@@ -14,14 +13,9 @@ import com.facebook.FacebookCallback
 import com.facebook.FacebookException
 import com.facebook.login.LoginManager
 import com.facebook.login.LoginResult
-import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.firebase.auth.FacebookAuthProvider
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
-import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.auth.FirebaseUser
-import com.google.firebase.auth.GoogleAuthProvider
-import com.google.firebase.auth.UserProfileChangeRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,8 +29,7 @@ class AuthViewModel @Inject constructor(
     private val userRepository: UserRepository,
     private val authRepository: AuthRepository,
     private val recaptchaManager: RecaptchaManager,
-    private val facebookCallbackManager: CallbackManager,
-    private val application: Application
+    private val facebookCallbackManager: CallbackManager
 ) : ViewModel() {
 
     private val auth: FirebaseAuth = FirebaseAuth.getInstance()
@@ -44,25 +37,22 @@ class AuthViewModel @Inject constructor(
     private val _currentUser = MutableStateFlow<User?>(null)
     val currentUser: StateFlow<User?> = _currentUser.asStateFlow()
 
+
+
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    private val _signInIntent = MutableStateFlow<IntentSender?>(null)
-    val signInIntent: StateFlow<IntentSender?> = _signInIntent.asStateFlow()
+    private val _googleSignInIntent = MutableStateFlow<IntentSender?>(null)
+    val googleSignInIntent: StateFlow<IntentSender?> = _googleSignInIntent.asStateFlow()
 
     private val _hasAcceptedTerms = MutableStateFlow(false)
     val hasAcceptedTerms: StateFlow<Boolean> = _hasAcceptedTerms.asStateFlow()
 
     private val _hasCompletedQuestionnaire = MutableStateFlow(false)
     val hasCompletedQuestionnaire: StateFlow<Boolean> = _hasCompletedQuestionnaire.asStateFlow()
-
-
-
-
-
 
     init {
         auth.currentUser?.let { firebaseUser ->
@@ -74,16 +64,11 @@ class AuthViewModel @Inject constructor(
         }
     }
 
-
-    fun setQuestionnaireCompleted(completed: Boolean) {
-        viewModelScope.launch {
-            _hasCompletedQuestionnaire.value = completed
-            // You might want to save this state to SharedPreferences or your backend
-        }
+    fun setErrorMessage(message: String?) {
+        _errorMessage.value = message
     }
 
-
-    fun loginUser(email: String, password: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+    fun loginUser(email: String, password: String) {
         viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
@@ -95,32 +80,21 @@ class AuthViewModel @Inject constructor(
                         val firebaseUser = signInResult.getOrThrow()
                         val user = createOrUpdateLocalUser(firebaseUser)
                         _currentUser.value = user
-                        onSuccess()
                     } else {
-                        val errorMsg = signInResult.exceptionOrNull()?.message ?: "Authentication failed"
-                        _errorMessage.value = errorMsg
-                        onError(errorMsg)
+                        _errorMessage.value = signInResult.exceptionOrNull()?.message ?: "Authentication failed"
                     }
                 } else {
-                    val errorMsg = "reCAPTCHA verification failed"
-                    _errorMessage.value = errorMsg
-                    onError(errorMsg)
+                    _errorMessage.value = "reCAPTCHA verification failed"
                 }
             } catch (e: Exception) {
-                val errorMsg = when (e) {
-                    is FirebaseAuthInvalidCredentialsException -> "Invalid email or password"
-                    is FirebaseAuthInvalidUserException -> "No user found with this email"
-                    else -> "Authentication failed: ${e.message}"
-                }
-                _errorMessage.value = errorMsg
-                onError(errorMsg)
+                _errorMessage.value = "Authentication failed: ${e.message}"
             } finally {
                 _isLoading.value = false
             }
         }
     }
 
-    fun registerUser(username: String, email: String, password: String, petName: String?, onSuccess: () -> Unit, onError: (String) -> Unit) {
+    fun registerUser(username: String, email: String, password: String, petName: String?) {
         viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
@@ -129,60 +103,24 @@ class AuthViewModel @Inject constructor(
                 if (recaptchaVerified) {
                     val authResult = auth.createUserWithEmailAndPassword(email, password).await()
                     authResult.user?.let { firebaseUser ->
-                        val profileUpdates = UserProfileChangeRequest.Builder()
-                            .setDisplayName(username)
-                            .build()
-                        firebaseUser.updateProfile(profileUpdates).await()
-
                         val user = createOrUpdateLocalUser(firebaseUser)
+                        user.username = username
                         user.petName = petName
                         user.hasAcceptedTerms = false
                         user.hasCompletedQuestionnaire = false
                         userRepository.updateUser(user)
                         _currentUser.value = user
-                        onSuccess()
                     } ?: run {
-                        val errorMsg = "Failed to create user"
-                        _errorMessage.value = errorMsg
-                        onError(errorMsg)
+                        _errorMessage.value = "Failed to create user"
                     }
                 } else {
-                    val errorMsg = "reCAPTCHA verification failed"
-                    _errorMessage.value = errorMsg
-                    onError(errorMsg)
+                    _errorMessage.value = "reCAPTCHA verification failed"
                 }
             } catch (e: Exception) {
-                val errorMsg = when (e) {
-                    is FirebaseAuthInvalidCredentialsException -> "Invalid email or password format"
-                    is FirebaseAuthInvalidUserException -> "This email is already in use"
-                    else -> "Registration failed: ${e.message}"
-                }
-                _errorMessage.value = errorMsg
-                onError(errorMsg)
+                _errorMessage.value = "Registration failed: ${e.message}"
             } finally {
                 _isLoading.value = false
             }
-        }
-    }
-
-    private suspend fun firebaseAuthWithGoogle(account: GoogleSignInAccount) {
-        val idToken = account.idToken
-        if (idToken != null) {
-            try {
-                val credential = GoogleAuthProvider.getCredential(idToken, null)
-                val authResult = auth.signInWithCredential(credential).await()
-                val firebaseUser = authResult.user
-                if (firebaseUser != null) {
-                    val user = createOrUpdateLocalUser(firebaseUser)
-                    _currentUser.value = user
-                } else {
-                    _errorMessage.value = "Failed to retrieve user data"
-                }
-            } catch (e: Exception) {
-                _errorMessage.value = "Firebase authentication with Google failed: ${e.message}"
-            }
-        } else {
-            _errorMessage.value = "Google Sign-In failed: No ID token"
         }
     }
 
@@ -193,7 +131,7 @@ class AuthViewModel @Inject constructor(
             try {
                 val result = authRepository.beginSignIn()
                 if (result.isSuccess) {
-                    _signInIntent.value = result.getOrNull()
+                    _googleSignInIntent.value = result.getOrNull()
                 } else {
                     _errorMessage.value = result.exceptionOrNull()?.message ?: "Failed to begin Google Sign-In"
                 }
@@ -205,32 +143,25 @@ class AuthViewModel @Inject constructor(
         }
     }
 
-    fun handleGoogleSignInResult(data: Intent) {
+
+    fun handleGoogleSignInResult(data: Intent?) {
         viewModelScope.launch {
-            _isLoading.value = true
-            _errorMessage.value = null
             try {
-                val result = authRepository.handleSignInResult(data)
+                val result = authRepository.handleSignInResult(data!!)
                 if (result.isSuccess) {
-                    val firebaseUser = result.getOrNull()
-                    firebaseUser?.let {
-                        val user = createOrUpdateLocalUser(it)
-                        _currentUser.value = user
-                    } ?: run {
-                        _errorMessage.value = "Failed to retrieve user data"
-                    }
+                    val firebaseUser = result.getOrThrow()
+                    val user = createOrUpdateLocalUser(firebaseUser)
+                    _currentUser.value = user
                 } else {
                     _errorMessage.value = result.exceptionOrNull()?.message ?: "Google Sign-In failed"
                 }
             } catch (e: Exception) {
-                _errorMessage.value = "Google authentication failed: ${e.message}"
-            } finally {
-                _isLoading.value = false
+                _errorMessage.value = "Google Sign-In failed: ${e.message}"
             }
         }
     }
 
-    fun setupFacebookCallback() {
+    fun beginFacebookSignIn() {
         LoginManager.getInstance().registerCallback(facebookCallbackManager,
             object : FacebookCallback<LoginResult> {
                 override fun onSuccess(result: LoginResult) {
@@ -245,6 +176,8 @@ class AuthViewModel @Inject constructor(
                     _errorMessage.value = "Facebook login failed: ${error.message}"
                 }
             })
+        // This line needs to be called from an Activity or Fragment
+        // LoginManager.getInstance().logInWithReadPermissions(activity, listOf("email", "public_profile"))
     }
 
     private fun handleFacebookAccessToken(token: String) {
@@ -268,9 +201,6 @@ class AuthViewModel @Inject constructor(
         }
     }
 
-    fun updateErrorMessage(error: String) {
-        _errorMessage.value = error
-    }
 
     fun acceptTerms() {
         viewModelScope.launch {
@@ -282,12 +212,11 @@ class AuthViewModel @Inject constructor(
         }
     }
 
-    fun submitQuestionnaire(answers: Map<String, String>) {
+    fun setQuestionnaireCompleted(completed: Boolean) {
         viewModelScope.launch {
-            _hasCompletedQuestionnaire.value = true
+            _hasCompletedQuestionnaire.value = completed
             _currentUser.value?.let { user ->
-                user.hasCompletedQuestionnaire = true
-                user.questionnaireAnswers = answers
+                user.hasCompletedQuestionnaire = completed
                 userRepository.updateUser(user)
             }
         }
@@ -305,14 +234,12 @@ class AuthViewModel @Inject constructor(
 
     private suspend fun createOrUpdateLocalUser(firebaseUser: FirebaseUser): User {
         val existingUser = userRepository.getUserByEmail(firebaseUser.email ?: "")
-        return if (existingUser != null) {
-            existingUser.apply {
-                username = firebaseUser.displayName ?: username
-                email = firebaseUser.email ?: email
-                lastLoginTime = System.currentTimeMillis()
-            }.also { userRepository.updateUser(it) }
-        } else {
-            User(
+        return existingUser?.apply {
+            username = firebaseUser.displayName ?: username
+            email = firebaseUser.email ?: email
+            lastLoginTime = System.currentTimeMillis()
+        }?.also { userRepository.updateUser(it) }
+            ?: User(
                 id = firebaseUser.uid,
                 username = firebaseUser.displayName ?: "",
                 email = firebaseUser.email ?: "",
@@ -320,7 +247,6 @@ class AuthViewModel @Inject constructor(
                 hasAcceptedTerms = false,
                 hasCompletedQuestionnaire = false
             ).also { userRepository.insertUser(it) }
-        }
     }
 
     fun clearErrorMessage() {

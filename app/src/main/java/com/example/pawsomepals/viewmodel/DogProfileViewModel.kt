@@ -117,7 +117,6 @@ class DogProfileViewModel @Inject constructor(
             }
         }
     }
-
     fun deleteDogProfile(dogId: String) {
         viewModelScope.launch {
             _dogProfileState.value = DogProfileState.Loading

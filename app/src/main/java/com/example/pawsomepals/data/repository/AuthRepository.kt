@@ -11,6 +11,7 @@ import com.google.android.gms.safetynet.SafetyNet
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.firestore.FirebaseFirestore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -21,6 +22,7 @@ import javax.inject.Singleton
 @Singleton
 class AuthRepository @Inject constructor(
     private val auth: FirebaseAuth,
+    private val firestore: FirebaseFirestore,
     private val recaptchaManager: RecaptchaManager,
     @ApplicationContext private val context: Context
 ) {
@@ -55,7 +57,9 @@ class AuthRepository @Inject constructor(
                     idToken != null -> {
                         val firebaseCredential = GoogleAuthProvider.getCredential(idToken, null)
                         val authResult = auth.signInWithCredential(firebaseCredential).await()
-                        Result.success(authResult.user!!)
+                        val user = authResult.user!!
+                        saveUserToFirestore(user)
+                        Result.success(user)
                     }
                     else -> {
                         Result.failure(Exception("No ID token!"))
@@ -89,6 +93,7 @@ class AuthRepository @Inject constructor(
             try {
                 val result = auth.signInWithEmailAndPassword(email, password).await()
                 result.user?.let {
+                    saveUserToFirestore(it)
                     Result.success(it)
                 } ?: Result.failure(Exception("Authentication failed: User is null"))
             } catch (e: Exception) {
@@ -101,7 +106,10 @@ class AuthRepository @Inject constructor(
         return withContext(Dispatchers.IO) {
             try {
                 val user = auth.currentUser
-                user?.delete()?.await()
+                user?.let {
+                    firestore.collection("users").document(it.uid).delete().await()
+                    it.delete().await()
+                }
                 auth.signOut()
                 Result.success(Unit)
             } catch (e: Exception) {
@@ -126,9 +134,22 @@ class AuthRepository @Inject constructor(
             try {
                 val credential = GoogleAuthProvider.getCredential(idToken, null)
                 val result = auth.signInWithCredential(credential).await()
-                Result.success(result.user!!)
+                val user = result.user!!
+                saveUserToFirestore(user)
+                Result.success(user)
             } catch (e: Exception) {
                 Result.failure(e)
             }
         }
-    }}
+    }
+
+    private suspend fun saveUserToFirestore(user: FirebaseUser) {
+        val userMap = hashMapOf(
+            "uid" to user.uid,
+            "email" to user.email,
+            "displayName" to user.displayName,
+            "photoUrl" to user.photoUrl?.toString()
+        )
+        firestore.collection("users").document(user.uid).set(userMap).await()
+    }
+}

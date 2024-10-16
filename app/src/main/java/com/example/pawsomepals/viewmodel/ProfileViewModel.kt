@@ -35,6 +35,20 @@ class ProfileViewModel @Inject constructor(
     private val storage = FirebaseStorage.getInstance()
 
 
+    fun loadProfileById(userId: String) {
+        viewModelScope.launch {
+            try {
+                val user = userRepository.getUserById(userId)
+                _userProfile.value = user
+                user?.let {
+                    _dogProfile.value = userRepository.getDogProfileByOwnerId(it.id)
+                }
+            } catch (e: Exception) {
+                Log.e("ProfileViewModel", "Error loading profile by ID: ${e.message}")
+            }
+        }
+    }
+
     fun loadProfiles() {
         viewModelScope.launch {
             try {

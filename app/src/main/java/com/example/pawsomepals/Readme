@@ -1,0 +1,346 @@
+# PawsomePals
+
+PawsomePals is a comprehensive social networking application designed specifically for dog owners. Our mission is to create a vibrant community where dog lovers can connect, arrange playdates, and share their experiences with fellow dog enthusiasts in their local area.
+
+## Features
+
+### User Management
+- **Authentication**: Secure sign-up and login using email/password, Google Sign-In, or Facebook Login
+- **User Profiles**: Customizable profiles for dog owners
+- **Dog Profiles**: Detailed profiles for dogs, including breed, age, temperament, and photos
+
+### Social Networking
+- **Playdate Scheduling**: Arrange and manage playdates with other dog owners
+- **Chat Functionality**: Real-time messaging between users
+- **Swipe-based Dog Matching**: Find potential playmates for your dog with a user-friendly swiping interface
+- **Photo Sharing**: Upload and share photos of your furry friends
+- **Rating System**: Rate and review playdates and experiences
+
+### Pet Care
+- **Health Advisor**: AI-powered health tips and reminders for your dog
+- **Trainer Tips**: Professional dog training advice and tutorials
+
+### Integrations
+- **Google Calendar**: Sync playdates with your Google Calendar, including two-way synchronization
+- **Location Services**: Find dog-friendly locations and nearby dog owners
+- **Notifications**: Stay updated with push notifications for messages, playdate requests, and reminders
+- **Weather Integration**: Real-time weather information for playdates
+
+## Architecture and Tech Stack
+
+PawsomePals is built using modern Android development practices and tools:
+
+- **Language**: Kotlin
+- **UI Framework**: Jetpack Compose for a reactive and declarative UI
+- **Architecture**: MVVM (Model-View-ViewModel) with Clean Architecture principles
+- **Dependency Injection**: Hilt for efficient and testable dependency management
+- **Asynchronous Programming**: Coroutines and Flow for managing background tasks and reactive streams
+- **Local Storage**: Room Database for efficient data persistence
+- **Remote Data**: Retrofit for API communication
+- **Authentication**: Firebase Authentication
+- **Real-time Database**: Firebase Realtime Database and Cloud Firestore
+- **Maps and Location**: Google Maps API and Fused Location Provider
+- **Social Login**: Google Sign-In and Facebook Login SDK
+- **Calendar Integration**: Google Calendar API with bi-directional sync
+- **AI Integration**: ChatGPT API for Health Advisor feature
+- **Weather Integration**: WeatherAPI for real-time weather information
+- **Data Persistence**: DataStore for lightweight data storage
+
+## Getting Started
+
+### Prerequisites
+
+- Android Studio Arctic Fox or later
+- JDK 11 or later
+- Android SDK with minimum API level 24
+- Google Play Services SDK
+- Firebase account
+- Facebook Developer account
+
+### Installation
+
+1. Clone the repository: git clone https://github.com/yourusername/pawsome-pals.git
+
+2. Open the project in Android Studio.
+
+3. Create a `local.properties` file in the root directory and add the following (replace with your actual keys):
+sdk.dir=/path/to/your/Android/sdk
+MAPS_API_KEY=your_google_maps_api_key
+GOOGLE_SIGN_IN_API_KEY=your_google_sign_in_api_key
+FACEBOOK_APP_ID=your_facebook_app_id
+FACEBOOK_CLIENT_TOKEN=your_facebook_client_token
+RECAPTCHA_SITE_KEY=your_recaptcha_site_key
+OPENAI_API_KEY=your_openai_api_key
+WEATHER_API_KEY=your_weatherapi_key
+
+4. Sync the project with Gradle files.
+
+5. Run the app on an emulator or physical device.
+
+## Configuration
+
+### Google Services
+
+1. Set up a project in the Google Cloud Console.
+2. Enable the necessary APIs (Maps, Places, Sign-In, Calendar).
+3. Create credentials and add the `google-services.json` file to the app module.
+
+### Facebook Login
+
+1. Set up a Facebook Developer account and create an app.
+2. Configure the app settings and get your App ID and Client Token.
+
+### Firebase
+
+1. Create a Firebase project and add your Android app to it.
+2. Download the `google-services.json` file and place it in the app module.
+3. Enable Authentication and set up Realtime Database/Firestore as needed.
+
+### OpenAI (for Health Advisor)
+
+1. Sign up for an OpenAI account and obtain an API key.
+2. Add the API key to your `local.properties` file.
+
+### WeatherAPI
+
+1. Sign up for a WeatherAPI account at https://www.weatherapi.com/
+2. Obtain an API key from your account dashboard.
+3. Add the API key to your `local.properties` file.
+
+## Project Structure
+
+Here's an overview of the main files and directories in the PawsomePals project:
+
+app/
+├── src/
+│   ├── main/
+│   │   ├── java/com/example/pawsomepals/
+│   │   │   ├── data/
+│   │   │   │   ├── remote/
+│   │   │   │   │   └── WeatherApi.kt
+│   │   │   │   ├── dao/
+│   │   │   │   │   ├── PlaydateDao.kt
+│   │   │   │   │   ├── UserDao.kt
+│   │   │   │   │   └── DogDao.kt
+│   │   │   │   ├── model/
+│   │   │   │   │   ├── PlaydateRequest.kt
+│   │   │   │   │   ├── WeatherInfo.kt
+│   │   │   │   │   ├── User.kt
+│   │   │   │   │   └── DogProfile.kt
+│   │   │   │   └── repository/
+│   │   │   │       ├── GoogleCalendarRepository.kt
+│   │   │   │       ├── PlaydateRepository.kt
+│   │   │   │       ├── WeatherRepository.kt
+│   │   │   │       ├── UserRepository.kt
+│   │   │   │       └── DogProfileRepository.kt
+│   │   │   ├── di/
+│   │   │   │   ├── AppContainer.kt
+│   │   │   │   └── HiltAppModule.kt
+│   │   │   ├── notification/
+│   │   │   │   └── NotificationManager.kt
+│   │   │   ├── service/
+│   │   │   │   ├── LocationService.kt
+│   │   │   │   ├── LocationSuggestionService.kt
+│   │   │   │   ├── MatchingService.kt
+│   │   │   │   └── PlaydateNotificationService.kt
+│   │   │   ├── ui/
+│   │   │   │   ├── theme/
+│   │   │   │   │   ├── PlaydateCalendarScreen.kt
+│   │   │   │   │   └── PlaydateSchedulingScreen.kt
+│   │   │   │   ├── DogProfileScreen.kt
+│   │   │   │   └── UserProfileScreen.kt
+│   │   │   ├── viewmodel/
+│   │   │   │   ├── PlaydateViewModel.kt
+│   │   │   │   ├── UserProfileViewModel.kt
+│   │   │   │   ├── DogProfileViewModel.kt
+│   │   │   │   ├── AIViewModel.kt
+│   │   │   │   ├── SwipeViewModel.kt
+│   │   │   │   ├── TrainerTipsViewModel.kt
+│   │   │   │   └── HealthAdvisorViewModel.kt
+│   │   │   ├── MainActivity.kt
+│   │   │   └── PawsomePalsApplication.kt
+│   │   └── res/
+│   └── test/
+└── build.gradle.kts
+
+## Development Workflow
+
+1. Create a new branch for each feature or bug fix.
+2. Write unit tests for new functionality.
+3. Ensure all tests pass before submitting a pull request.
+4. Follow the project's coding standards and style guide.
+5. Use descriptive commit messages and keep commits atomic.
+
+## Testing
+
+- Unit Tests: JUnit and Mockito for testing individual components
+- UI Tests: Espresso for automated UI testing
+- Integration Tests: Hilt for dependency injection in tests
+
+Run tests using:
+./gradlew test
+
+## Deployment
+
+1. Increment the version code and name in `build.gradle`.
+2. Run Proguard to obfuscate and minify the code.
+3. Generate a signed APK or App Bundle.
+4. Test the release build thoroughly.
+5. Deploy to Google Play Store using the Google Play Console.
+
+## Contributing
+
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct, and the process for submitting pull requests to us.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.
+
+## Acknowledgments
+
+- [Android Jetpack](https://developer.android.com/jetpack)
+- [Firebase](https://firebase.google.com/)
+- [Google Maps Platform](https://developers.google.com/maps)
+- [Facebook for Developers](https://developers.facebook.com/)
+- [OpenAI](https://openai.com/)
+- [Kizitonwose Calendar](https://github.com/kizitonwose/Calendar)
+- [WeatherAPI](https://www.weatherapi.com/)
+
+## Support
+
+If you encounter any issues or have questions, please file an issue on the GitHub repository or contact our support team at support@pawsomepals.com.
+
+## New Features and Improvements v1
+
+- **Weather Integration**: Added real-time weather information for playdates using WeatherAPI.
+- **Enhanced Playdate Scheduling**: Improved the playdate scheduling process with more detailed time selection and weather considerations.
+- **Calendar Integration**: Enhanced Google Calendar integration for better playdate management.
+- **Location Services**: Improved location suggestions for dog-friendly areas.
+- **Notifications**: Added weather-aware notifications for upcoming playdates.
+
+## Recent Improvements and Updates v2
+
+- **Enhanced Playdate Scheduling**: Improved the playdate scheduling process with more detailed time selection and weather considerations.
+- **Reactive Programming**: Implemented Flow for better reactive programming support in PlaydateDao, PlaydateRepository, and PlaydateViewModel.
+- **Improved Data Consistency**: Updated PlaydateRequest model to handle both selected dates and suggested timeslots.
+- **Streamlined Repository Layer**: Refactored PlaydateRepository to better handle Flow-based operations and improve consistency with the ViewModel.
+- **Enhanced DAO Operations**: Updated PlaydateDao to provide more efficient and flexible database operations, fully leveraging Room's capabilities.
+- **Weather Integration**: Improved integration of real-time weather information for playdates using WeatherAPI.
+- **Calendar Integration**: Enhanced Google Calendar integration for better playdate management and synchronization.
+- **Location Services**: Improved location suggestions for dog-friendly areas.
+- **Notifications**: Added weather-aware notifications for upcoming playdates.
+
+
+## Recent Improvements and Updates v3
+
+
+- **Multi-Dog Support**: Implemented the ability for users to manage multiple dog profiles.
+- **Enhanced User Profile**: Updated user profile to display and manage multiple associated dog profiles.
+- **Improved Dog Profile Management**: Refactored DogProfileViewModel and related components to handle multiple dog profiles efficiently.
+- **AI Integration Enhancements**: Updated AI-powered features (Health Advisor and Trainer Tips) to work with multiple dog profiles.
+- **Swipe Functionality Update**: Adapted the swipe-based matching system to work with users who have multiple dogs.
+- **UI Improvements**: Added a dog selector in relevant screens to switch between different dog profiles.
+
+
+## Recent Improvements and Updates v4
+
+- **Questionnaire Integration**: Implemented a comprehensive questionnaire for new users to gather detailed information about their dogs.
+- **Enhanced Dog Profile Creation**: Automated dog profile creation based on questionnaire responses, providing a more seamless onboarding experience.
+- **Improved User Repository**: Refactored UserRepository to implement an interface, enhancing testability and adhering to dependency inversion principle.
+- **Authentication Flow Enhancement**: Updated the authentication flow to properly handle new user registration, including terms acceptance and questionnaire completion.
+- **ViewModels Refactoring**:
+  - Updated AuthViewModel to handle various authentication methods more consistently.
+  - Refactored QuestionnaireViewModel to process and save questionnaire responses efficiently.
+- **UI Improvements**:
+  - Enhanced QuestionnaireScreen with a more intuitive and user-friendly interface.
+  - Updated navigation flow to guide users through registration, terms acceptance, and questionnaire completion seamlessly.
+- **Data Model Updates**: Revised User and DogProfile models to accommodate new fields from the questionnaire.
+- **Firebase Integration**: Improved Firebase integration for saving and retrieving user and dog profile data, including questionnaire responses.
+
+## Recent Improvements and Updates v5
+
+- **Notification System Enhancement**: Implemented a robust notification system to keep users informed about important events and interactions within the app.
+  - Created a `NotificationRepository` to handle all notification-related operations with Firebase Firestore.
+  - Developed a `NotificationViewModel` to manage notification state and operations in the UI.
+  - Implemented features for loading notifications, marking them as read, and deleting them.
+  - Added functionality to track and display unread notification count.
+
+- **Error Handling and User Feedback**: Improved error handling across the app, particularly in the notification system, to provide better feedback to users when operations fail.
+
+- **Performance Optimization**: Utilized Kotlin Coroutines and StateFlow for efficient asynchronous operations and reactive UI updates in the notification system.
+
+- **Code Organization and Architecture**:
+  - Refactored notification-related code to follow MVVM architecture principles.
+  - Improved separation of concerns between data layer (Repository) and presentation layer (ViewModel).
+
+- **User Experience Improvements**:
+  - Added real-time updates for notifications, ensuring users always see the most current information.
+  - Implemented a mechanism to clear error messages, preventing stale error states in the UI.
+
+- **Firebase Integration**: Enhanced Firebase Firestore integration for efficient storage and retrieval of user notifications.
+
+- **Scalability Enhancements**: Designed the notification system to be easily expandable for future notification types and features.
+
+These updates significantly enhance the app's ability to keep users engaged and informed about important events, improve overall user experience, and lay the groundwork for future social features and interactions within the PawsomePals community.
+
+These updates significantly enhance the user onboarding experience, provide more detailed dog profiles, and improve the overall data management of the application. The new questionnaire feature allows for better matchmaking and personalized experiences within the app.
+Recent Improvements and Updates v6
+
+Advanced Matchmaking System: Implemented a sophisticated algorithm for more accurate dog matching based on multiple factors.
+Preference Settings: Added detailed user preferences for matchmaking, allowing for more personalized results.
+DogBreeds Database: Integrated a comprehensive list of dog breeds with size categorizations for improved matching.
+Enhanced Settings Management: Implemented PreferencesRepository for efficient handling of user preferences across the app.
+Remote Settings Sync: Added SettingsApi for synchronizing user preferences with the backend server.
+UI Enhancements:
+
+New MatchmakingPreferencesScreen for users to set detailed preferences.
+Updated SettingsScreen to include access to matchmaking preferences.
+
+
+Improved Data Models: Updated Settings and Dog models to accommodate new matchmaking preferences.
+Performance Optimizations: Enhanced data fetching and caching mechanisms for smoother user experience.
+## Recent Improvements and Updates v7
+
+- **Enhanced Database Rules**: Refined Firebase Realtime Database rules to improve data security while maintaining necessary access for app functionality.
+
+- **Improved Dog Profile Management**:
+  - Added indexing for efficient querying of dog profiles by owner ID.
+  - Restructured dog profile data storage for better performance and easier retrieval.
+
+- **Authentication Flow Optimization**:
+  - Enhanced user authentication process to ensure proper data access and management.
+  - Improved error handling and user feedback during login and registration processes.
+
+- **Profile Loading Enhancement**:
+  - Implemented more robust error handling when loading user and dog profiles.
+  - Added detailed logging for easier debugging of profile-related issues.
+
+- **Data Synchronization**:
+  - Improved synchronization between local database and Firebase for more consistent data across devices.
+  - Enhanced data fetching mechanisms to reduce unnecessary network calls.
+
+- **UI/UX Improvements**:
+  - Refined profile screens to handle multiple dog profiles more effectively.
+  - Improved error messaging to provide users with clearer information about any issues.
+
+- **Performance Optimizations**:
+  - Implemented more efficient data querying techniques to reduce load times.
+  - Optimized database read/write operations to improve overall app responsiveness.
+
+- **Code Refactoring**:
+  - Restructured repositories and ViewModels for better separation of concerns and easier maintenance.
+  - Enhanced use of Kotlin Coroutines and Flow for more reactive and efficient asynchronous operations.
+
+These updates focus on improving the app's stability, performance, and user experience, particularly in areas related to user authentication, profile management, and data handling. The enhancements provide a more robust foundation for future feature developments and scaling of the PawsomePals platform.
+
+
+## Roadmap
+
+- Implement video chat for virtual playdates
+- Add a marketplace for dog-related products
+- Integrate with popular dog activity trackers
+- Expand to iOS platform
+- Enhance Google Calendar integration with more advanced features
+- Implement AI-driven playdate suggestions based on dog compatibility
+
+Stay tuned for more exciting features and improvements!

@@ -12,6 +12,7 @@ import com.example.pawsomepals.data.remote.PhotoApi
 import com.example.pawsomepals.data.remote.SettingsApi
 import com.example.pawsomepals.data.repository.AuthRepository
 import com.example.pawsomepals.data.repository.ChatRepository
+import com.example.pawsomepals.data.repository.DogProfileRepository
 import com.example.pawsomepals.data.repository.NotificationRepository
 import com.example.pawsomepals.data.repository.OpenAIRepository
 import com.example.pawsomepals.data.repository.PhotoRepository
@@ -54,12 +55,19 @@ object AppModule {
     }
     @Provides
     @Singleton
+    fun provideFirebaseDatabase(): FirebaseDatabase {
+        return FirebaseDatabase.getInstance()
+    }
+
+    @Provides
+    @Singleton
     fun provideAuthRepository(
         firebaseAuth: FirebaseAuth,
+        firestore: FirebaseFirestore,
         recaptchaManager: RecaptchaManager,
         @ApplicationContext context: Context
     ): AuthRepository {
-        return AuthRepository(firebaseAuth, recaptchaManager, context)
+        return AuthRepository(firebaseAuth, firestore, recaptchaManager, context)
     }
 
     @Provides
@@ -131,32 +139,27 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideQuestionRepository(db: AppDatabase, firebaseRef: DatabaseReference): QuestionRepository {
-        return QuestionRepository(db.questionDao(), firebaseRef)
+    fun provideQuestionRepository(db: AppDatabase, firestore: FirebaseFirestore): QuestionRepository {
+        return QuestionRepository(db.questionDao(), firestore)
     }
 
     @Provides
     @Singleton
-    fun provideFirebaseDatabase(): FirebaseDatabase {
-        return FirebaseDatabase.getInstance()
+    fun provideUserRepository(db: AppDatabase, firestore: FirebaseFirestore): UserRepository {
+        return UserRepository(db.userDao(), db.dogDao(), firestore)
+    }
+
+    fun provideDogProfileRepository(
+        firestore: FirebaseFirestore,
+        userRepository: UserRepository
+    ): DogProfileRepository {
+        return DogProfileRepository(firestore, userRepository)
     }
 
     @Provides
     @Singleton
-    fun provideFirebaseDatabaseReference(firebaseDatabase: FirebaseDatabase): DatabaseReference {
-        return firebaseDatabase.reference
-    }
-
-    @Provides
-    @Singleton
-    fun provideUserRepository(db: AppDatabase, firebaseDatabase: FirebaseDatabase): UserRepository {
-        return UserRepository(db.userDao(), db.dogDao(), firebaseDatabase.reference)
-    }
-
-    @Provides
-    @Singleton
-    fun provideChatRepository(firebaseDatabase: FirebaseDatabase): ChatRepository {
-        return ChatRepository(firebaseDatabase)
+    fun provideChatRepository(firestore: FirebaseFirestore): ChatRepository {
+        return ChatRepository(firestore)
     }
 
     @Provides

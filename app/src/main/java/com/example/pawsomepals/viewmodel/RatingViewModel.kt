@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.pawsomepals.data.model.Rating
 import com.example.pawsomepals.data.repository.RatingRepository
+import com.example.pawsomepals.data.repository.UserRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -12,7 +13,9 @@ import javax.inject.Inject
 
 @HiltViewModel
 class RatingViewModel @Inject constructor(
-    private val ratingRepository: RatingRepository
+    private val ratingRepository: RatingRepository,
+    private val userRepository: UserRepository
+
 ) : ViewModel() {
 
     private val _ratingState = MutableStateFlow<RatingState>(RatingState.Idle)
@@ -32,6 +35,9 @@ class RatingViewModel @Inject constructor(
                 _errorMessage.value = "Failed to submit rating: ${e.message}"
             }
         }
+    }
+    fun getCurrentUserId(): String? {
+        return userRepository.getCurrentUserId() // Implement this method in UserRepository
     }
 
     fun getUserRatings(userId: String) {

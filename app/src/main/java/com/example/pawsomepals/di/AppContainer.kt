@@ -4,22 +4,22 @@ import android.content.Context
 import com.aallam.openai.client.OpenAI
 import com.example.pawsomepals.BuildConfig
 import com.example.pawsomepals.R
+import com.example.pawsomepals.ai.AIFeatures
 import com.example.pawsomepals.data.AppDatabase
-import com.example.pawsomepals.data.repository.ChatRepository
-import com.example.pawsomepals.data.repository.OpenAIRepository
-import com.example.pawsomepals.data.repository.PlaydateRepository
-import com.example.pawsomepals.data.repository.UserRepository
+import com.example.pawsomepals.data.repository.*
 import com.example.pawsomepals.notification.NotificationManager
 import com.example.pawsomepals.service.LocationService
 import com.example.pawsomepals.service.LocationSuggestionService
 import com.example.pawsomepals.service.MatchingService
+import com.example.pawsomepals.utils.RecaptchaManager
 import com.facebook.CallbackManager
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.location.LocationServices
 import com.google.firebase.FirebaseApp
-import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
 
 class AppContainer(private val context: Context) {
     init {
@@ -28,13 +28,15 @@ class AppContainer(private val context: Context) {
 
     val database: AppDatabase by lazy { AppDatabase.getDatabase(context) }
 
-    val firebaseDatabase: FirebaseDatabase by lazy { FirebaseDatabase.getInstance() }
+    val firestore: FirebaseFirestore by lazy { FirebaseFirestore.getInstance() }
+
+    val firebaseAuth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
 
     val userRepository: UserRepository by lazy {
-        UserRepository(database.userDao(), database.dogDao(), firebaseDatabase.reference)
+        UserRepository(database.userDao(), database.dogDao(), firestore)
     }
 
-    val chatRepository: ChatRepository by lazy { ChatRepository(firebaseDatabase) }
+    val chatRepository: ChatRepository by lazy { ChatRepository(firestore) }
 
     val playdateRepository: PlaydateRepository by lazy {
         PlaydateRepository(database.playdateDao(), userRepository)
@@ -67,4 +69,18 @@ class AppContainer(private val context: Context) {
     }
 
     val facebookCallbackManager: CallbackManager by lazy { CallbackManager.Factory.create() }
+
+    val recaptchaManager: RecaptchaManager by lazy { RecaptchaManager(context) }
+
+    val authRepository: AuthRepository by lazy {
+        AuthRepository(firebaseAuth, firestore, recaptchaManager, context)
+    }
+
+    val questionRepository: QuestionRepository by lazy {
+        QuestionRepository(database.questionDao(), firestore)
+    }
+
+    val aiFeatures: AIFeatures by lazy {
+        AIFeatures(openAI, userRepository, questionRepository)
+    }
 }

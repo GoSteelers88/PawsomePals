@@ -7,9 +7,8 @@ import com.example.pawsomepals.data.model.Dog
 import com.example.pawsomepals.data.model.DogProfile
 import com.example.pawsomepals.data.model.User
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.database.DatabaseReference
+import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.tasks.await
@@ -17,18 +16,15 @@ import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.util.UUID
 
-
 class UserRepository(
     private val userDao: UserDao,
     private val dogDao: DogDao,
-    private val firebaseRef: DatabaseReference
+    private val firestore: FirebaseFirestore
 ) {
     private var currentUser: User? = null
 
     suspend fun getCurrentUser(): User? {
         return currentUser ?: userDao.getLastLoggedInUser()?.also { currentUser = it }
-
-
     }
 
     fun getUserProfile(userId: String): Flow<User?> = flow {
@@ -40,24 +36,52 @@ class UserRepository(
     }
 
     suspend fun insertUser(user: User) {
-        userDao.insertUser(user)
-        firebaseRef.child("users").child(user.id).setValue(user).await()
+        withContext(Dispatchers.IO) {
+            userDao.insertUser(user)
+            firestore.collection("users").document(user.id).set(user).await()
+        }
     }
 
     suspend fun getDogProfileByOwnerId(ownerId: String): DogProfile? {
         return withContext(Dispatchers.IO) {
-            dogDao.getDogByOwnerId(ownerId)?.let { dogToDogProfile(it) }
-                ?: firebaseRef.child("dogs").orderByChild("ownerId").equalTo(ownerId)
-                    .get().await().children.firstOrNull()?.getValue(Dog::class.java)?.let { dogToDogProfile(it) }
+            val localDog = dogDao.getDogByOwnerId(ownerId)
+            if (localDog != null) {
+                dogToDogProfile(localDog)
+            } else {
+                val remoteDog = firestore.collection("dogs")
+                    .whereEqualTo("ownerId", ownerId)
+                    .get()
+                    .await()
+                    .documents
+                    .firstOrNull()
+                    ?.toObject(Dog::class.java)
+                remoteDog?.let {
+                    dogDao.insertDog(it)
+                    dogToDogProfile(it)
+                }
+            }
         }
     }
+
     suspend fun getDogProfileById(profileId: String): DogProfile? {
         return withContext(Dispatchers.IO) {
-            dogDao.getDogById(profileId)?.let { dogToDogProfile(it) }
-                ?: firebaseRef.child("dogs").child(profileId)
-                    .get().await().getValue(Dog::class.java)?.let { dogToDogProfile(it) }
+            val localDog = dogDao.getDogById(profileId)
+            if (localDog != null) {
+                dogToDogProfile(localDog)
+            } else {
+                val remoteDog = firestore.collection("dogs")
+                    .document(profileId)
+                    .get()
+                    .await()
+                    .toObject(Dog::class.java)
+                remoteDog?.let {
+                    dogDao.insertDog(it)
+                    dogToDogProfile(it)
+                }
+            }
         }
     }
+
     fun signInWithEmailAndPassword(email: String, password: String) {
         Log.d("FirebaseAuth", "Attempting to sign in with email: $email")
         FirebaseAuth.getInstance().signInWithEmailAndPassword(email, password)
@@ -81,32 +105,38 @@ class UserRepository(
         }
     }
 
-
     suspend fun loginUser(email: String, password: String): User? {
         return withContext(Dispatchers.IO) {
             val localUser = userDao.getUserByEmail(email)
-            val firebaseUser = firebaseRef.child("users").orderByChild("email").equalTo(email)
-                .get().await().children.firstOrNull()?.getValue(User::class.java)
+            val firebaseUser = firestore.collection("users")
+                .whereEqualTo("email", email)
+                .get()
+                .await()
+                .documents
+                .firstOrNull()
+                ?.toObject(User::class.java)
 
-            if (firebaseUser != null && firebaseUser.password == password) {
-                if (localUser == null || localUser != firebaseUser) {
-                    userDao.insertUser(firebaseUser)
+            when {
+                firebaseUser != null && firebaseUser.password == password -> {
+                    if (localUser == null || localUser != firebaseUser) {
+                        userDao.insertUser(firebaseUser)
+                    }
+                    currentUser = firebaseUser
+                    firebaseUser
                 }
-                currentUser = firebaseUser
-                firebaseUser
-            } else if (localUser != null && localUser.password == password) {
-                currentUser = localUser
-                // Sync local user to Firebase
-                firebaseRef.child("users").child(localUser.id).setValue(localUser).await()
-                localUser
-            } else {
-                null
+                localUser != null && localUser.password == password -> {
+                    currentUser = localUser
+                    // Sync local user to Firestore
+                    firestore.collection("users").document(localUser.id).set(localUser).await()
+                    localUser
+                }
+                else -> null
             }
         }
     }
 
     suspend fun userExists(email: String): Boolean {
-        return withContext(IO) {
+        return withContext(Dispatchers.IO) {
             val user = userDao.getUserByEmail(email)
             Log.d("UserRepository", "Checking if user exists: $email, Result: ${user != null}")
             user != null
@@ -114,19 +144,19 @@ class UserRepository(
     }
 
     suspend fun getUserByEmail(email: String): User? {
-        return withContext(IO) {
+        return withContext(Dispatchers.IO) {
             userDao.getUserByEmail(email)
         }
     }
 
     suspend fun getUserById(id: String): User? {
-        return withContext(IO) {
+        return withContext(Dispatchers.IO) {
             userDao.getUserById(id)
         }
     }
 
     suspend fun getUserByUsername(username: String): User? {
-        return withContext(IO) {
+        return withContext(Dispatchers.IO) {
             userDao.getUserByUsername(username)
         }
     }
@@ -143,8 +173,7 @@ class UserRepository(
                 hasAcceptedTerms = false,
                 hasCompletedQuestionnaire = false
             )
-            userDao.insertUser(user)
-            firebaseRef.child("users").child(userId).setValue(user).await()
+            insertUser(user)
 
             if (!petName.isNullOrBlank()) {
                 val dogId = UUID.randomUUID().toString()
@@ -154,16 +183,15 @@ class UserRepository(
                     name = petName,
                     // ... other dog properties
                 )
-                dogDao.insertDog(dog)  // Use the instance variable dogDao here
-                firebaseRef.child("dogs").child(dogId).setValue(dog).await()
+                insertDog(dog)
             }
         }
     }
 
     suspend fun updateUser(user: User) {
-        withContext(IO) {
+        withContext(Dispatchers.IO) {
             userDao.updateUser(user)
-            firebaseRef.child("users").child(user.id).setValue(user).await()
+            firestore.collection("users").document(user.id).set(user).await()
             if (user.id == currentUser?.id) {
                 currentUser = user
             }
@@ -173,14 +201,14 @@ class UserRepository(
     suspend fun insertDog(dog: Dog) {
         withContext(Dispatchers.IO) {
             dogDao.insertDog(dog)
-            firebaseRef.child("dogs").child(dog.id).setValue(dog).await()
+            firestore.collection("dogs").document(dog.id).set(dog).await()
         }
     }
 
     suspend fun updateDog(dog: Dog) {
         withContext(Dispatchers.IO) {
             dogDao.updateDog(dog)
-            firebaseRef.child("dogs").child(dog.id).setValue(dog).await()
+            firestore.collection("dogs").document(dog.id).set(dog).await()
         }
     }
 
@@ -244,22 +272,18 @@ class UserRepository(
     suspend fun updateDogProfile(dogProfile: DogProfile) {
         withContext(Dispatchers.IO) {
             val dog = dogProfileToDog(dogProfile)
-            dogDao.updateDog(dog)
-            firebaseRef.child("dogs").child(dog.id).setValue(dog).await()
+            updateDog(dog)
         }
     }
-
-
 
     suspend fun createOrUpdateDogProfile(dogProfile: DogProfile) {
         withContext(Dispatchers.IO) {
             val dog = dogProfileToDog(dogProfile)
             if (dogDao.getDogById(dog.id) != null) {
-                dogDao.updateDog(dog)
+                updateDog(dog)
             } else {
-                dogDao.insertDog(dog)
+                insertDog(dog)
             }
-            firebaseRef.child("dogs").child(dog.id).setValue(dog).await()
         }
     }
 
@@ -290,12 +314,18 @@ class UserRepository(
     suspend fun resetAllDailyQuestionCounts() {
         withContext(Dispatchers.IO) {
             userDao.resetAllDailyQuestionCounts()
-            // Also update Firebase if needed
+            // Also update Firestore
+            firestore.collection("users").get().await().documents.forEach { document ->
+                document.reference.update("dailyQuestionCount", 0)
+            }
         }
     }
+
     suspend fun updateUserQuestionnaireStatus(userId: String, completed: Boolean) {
-        userDao.updateUserQuestionnaireStatus(userId, completed)
-        firebaseRef.child("users").child(userId).child("hasCompletedQuestionnaire").setValue(completed)
+        withContext(Dispatchers.IO) {
+            userDao.updateUserQuestionnaireStatus(userId, completed)
+            firestore.collection("users").document(userId).update("hasCompletedQuestionnaire", completed).await()
+        }
     }
 
     suspend fun getCurrentUserDog(): DogProfile? {

@@ -38,7 +38,13 @@ class ViewModelFactory @Inject constructor(
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         return when {
             modelClass.isAssignableFrom(AuthViewModel::class.java) ->
-                AuthViewModel(userRepository, authRepository, recaptchaManager, facebookCallbackManager, application) as T
+                AuthViewModel(
+                    userRepository,
+                    authRepository,
+                    recaptchaManager,
+                    facebookCallbackManager
+                ) as T
+
             modelClass.isAssignableFrom(ProfileViewModel::class.java) ->
                 ProfileViewModel(userRepository, locationService) as T
             // Add other ViewModels here...

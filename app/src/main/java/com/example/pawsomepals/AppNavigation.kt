@@ -1,16 +1,49 @@
 package com.example.pawsomepals
 
+
 import android.os.Build
 import androidx.annotation.RequiresApi
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
+
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.pawsomepals.ui.theme.*
 import com.example.pawsomepals.viewmodel.*
+import java.net.URLDecoder
+import java.net.URLEncoder
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
+
+sealed class Screen(val route: String) {
+    object Splash : Screen("splash")
+    object Login : Screen("login")
+    object Register : Screen("register")
+    object TermsOfService : Screen("terms_of_service")
+    object Questionnaire : Screen("questionnaire")
+    object MainScreen : Screen("main_screen")
+    object Profile : Screen("profile/{userId}") {
+        fun createRoute(userId: String) = "profile/${URLEncoder.encode(userId, "UTF-8")}"
+    }
+    object DogProfile : Screen("dog_profile/{dogId}") {
+        fun createRoute(dogId: String) = "dog_profile/${URLEncoder.encode(dogId, "UTF-8")}"
+    }
+    object Playdate : Screen("playdate/{playdateId}") {
+        fun createRoute(playdateId: String) = "playdate/${URLEncoder.encode(playdateId, "UTF-8")}"
+    }
+    object Chat : Screen("chat/{chatId}") {
+        fun createRoute(chatId: String) = "chat/${URLEncoder.encode(chatId, "UTF-8")}"
+    }
+    object HealthAdvisor : Screen("health_advisor")
+    object Settings : Screen("settings")
+    object PhotoManagement : Screen("photo_management")
+    object Rating : Screen("rating/{ratingId}") {
+        fun createRoute(ratingId: String) = "rating/${URLEncoder.encode(ratingId, "UTF-8")}"
+    }
+    object Notifications : Screen("notifications")
+    object Swiping : Screen("swiping")
+    object TrainerTips : Screen("trainer_tips")
+}
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
@@ -23,161 +56,150 @@ fun AppNavigation(
     healthAdvisorViewModel: HealthAdvisorViewModel,
     settingsViewModel: SettingsViewModel,
     photoManagementViewModel: PhotoManagementViewModel,
+    questionnaireViewModel: QuestionnaireViewModel,
     ratingViewModel: RatingViewModel,
     notificationViewModel: NotificationViewModel,
-    swipingViewModel: SwipeViewModel,
-    trainerTipsViewModel: TrainerTipsViewModel,
-    questionnaireViewModel: QuestionnaireViewModel
+    swipingViewModel: SwipingViewModel,
+    trainerTipsViewModel: TrainerTipsViewModel
 ) {
     val navController = rememberNavController()
-    val currentUser by authViewModel.currentUser.collectAsState()
-    val hasAcceptedTerms by authViewModel.hasAcceptedTerms.collectAsState(initial = false)
-    val hasCompletedQuestionnaire by authViewModel.hasCompletedQuestionnaire.collectAsState(initial = false)
 
-    LaunchedEffect(currentUser, hasAcceptedTerms, hasCompletedQuestionnaire) {
-        currentUser?.let {
-            when {
-                !hasAcceptedTerms -> navController.navigate("terms_of_service")
-                !hasCompletedQuestionnaire -> navController.navigate("questionnaire")
-                else -> navController.navigate("main_screen") {
-                    popUpTo("login") { inclusive = true }
-                }
-            }
-        }
-    }
-
-    NavHost(navController = navController, startDestination = "login") {
-        composable("login") {
-            val isLoading by authViewModel.isLoading.collectAsState()
-            val errorMessage by authViewModel.errorMessage.collectAsState()
-
+    NavHost(navController = navController, startDestination = Screen.Login.route) {
+        composable(Screen.Login.route) {
             LoginScreen(
-                onLoginClick = { email, password ->
-                    authViewModel.loginUser(
-                        email,
-                        password,
-                        onSuccess = {
-                            navController.navigate("main_screen") {
-                                popUpTo("login") { inclusive = true }
-                            }
-                        },
-                        onError = { /* Error handling is done in ViewModel */ }
-                    )
-                },
-                onRegisterClick = { navController.navigate("register") },
-                onGoogleSignInClick = {
-                    // Implement Google Sign-In logic
-                },
-                onFacebookSignInClick = {
-                    // Implement Facebook Sign-In logic
-                },
-                isLoading = isLoading,
-                errorMessage = errorMessage
+                onLoginClick = { email, password -> authViewModel.loginUser(email, password) },
+                onRegisterClick = { navController.navigate(Screen.Register.route) },
+                onGoogleSignInClick = { authViewModel.beginGoogleSignIn() },
+                onFacebookSignInClick = { authViewModel.beginFacebookSignIn() },
+                onGoogleSignInIntentReceived = { /* Handle this if needed */ },
+                googleSignInIntent = null, // You might need to expose this from AuthViewModel
+                isLoading = authViewModel.isLoading.collectAsState().value,
+                errorMessage = authViewModel.errorMessage.collectAsState().value
             )
         }
 
-        composable("register") {
-            val isLoading by authViewModel.isLoading.collectAsState()
-            val errorMessage by authViewModel.errorMessage.collectAsState()
+
+        composable(Screen.Register.route) {
             RegisterScreen(
                 onRegisterClick = { username, email, password, confirmPassword, petName ->
-                    authViewModel.registerUser(username, email, password, petName,
-                        onSuccess = {
-                            authViewModel.clearErrorMessage()
-                            navController.navigate("terms_of_service") {
-                                popUpTo("register") { inclusive = true }
-                            }
-                        },
-                        onError = { error ->
-                            authViewModel.updateErrorMessage(error)
-                        }
-                    )
+                    authViewModel.registerUser(username, email, password, petName)
                 },
                 onLoginClick = { navController.popBackStack() },
-                isLoading = isLoading,
-                errorMessage = errorMessage
+                isLoading = authViewModel.isLoading.collectAsState().value,
+                errorMessage = authViewModel.errorMessage.collectAsState().value
             )
         }
 
-        composable("terms_of_service") {
+        composable(Screen.TermsOfService.route) {
             TermsOfServiceScreen(
                 onAccept = {
                     authViewModel.acceptTerms()
-                    navController.navigate("questionnaire")
+                    navController.navigate(Screen.Questionnaire.route)
                 },
                 onDecline = {
                     authViewModel.logOut()
-                    navController.navigate("login") {
-                        popUpTo("login") { inclusive = true }
+                    navController.navigate(Screen.Login.route) {
+                        popUpTo(Screen.Login.route) { inclusive = true }
                     }
                 }
             )
         }
 
-        composable("questionnaire") {
-            val userId = authViewModel.currentUser.value?.id ?: return@composable
+        composable(Screen.Questionnaire.route) {
+            val currentUserId = authViewModel.currentUser.collectAsState().value?.id ?: ""
             QuestionnaireScreen(
                 viewModel = questionnaireViewModel,
-                userId = userId,
+                userId = currentUserId,
                 onComplete = {
                     authViewModel.setQuestionnaireCompleted(true)
-                    navController.navigate("main_screen") {
-                        popUpTo("login") { inclusive = true }
+                    navController.navigate(Screen.MainScreen.route) {
+                        popUpTo(Screen.Login.route) { inclusive = true }
                     }
                 }
             )
         }
 
-        composable("main_screen") {
+        composable(Screen.MainScreen.route) {
             MainScreen(
                 navController = navController,
-                onProfileClick = { navController.navigate("user_profile") },
-                onDogProfileClick = { navController.navigate("dog_profile") },
-                onSwipeScreenClick = { navController.navigate("swiping_screen") },
-                onChatListClick = { navController.navigate("chat_list") },
-                onSchedulePlaydateClick = { navController.navigate("playdate_calendar") },
-                onPlaydateRequestsClick = { navController.navigate("playdate_requests") },
-                onTrainerClick = { navController.navigate("trainer_tips") },
-                onHealthAdvisorClick = { navController.navigate("health_advisor") },
-                onPhotoManagementClick = { navController.navigate("photo_management") },
-                onRatingClick = { navController.navigate("rating") },
-                onNotificationsClick = { navController.navigate("notifications") },
-                onSettingsClick = { navController.navigate("settings") },
-                username = authViewModel.currentUser.value?.username ?: "User"
+                username = authViewModel.currentUser.collectAsState().value?.username ?: "",
+                profileViewModel = profileViewModel,
+                dogProfileViewModel = dogProfileViewModel,
+                playdateViewModel = playdateViewModel,
+                chatViewModel = chatViewModel,
+                healthAdvisorViewModel = healthAdvisorViewModel,
+                settingsViewModel = settingsViewModel,
+                photoManagementViewModel = photoManagementViewModel,
+                ratingViewModel = ratingViewModel,
+                notificationViewModel = notificationViewModel,
+                swipingViewModel = swipingViewModel,
+                trainerTipsViewModel = trainerTipsViewModel,
+                onLogout = {
+                    authViewModel.logOut()
+                    navController.navigate(Screen.Login.route) {
+                        popUpTo(Screen.MainScreen.route) { inclusive = true }
+                    }
+                },
+                onProfileClick = { userId -> navController.navigate(Screen.Profile.createRoute(userId)) },
+                onDogProfileClick = { navController.navigate(Screen.DogProfile.route) },
+                onPlaydateClick = { playdateId -> navController.navigate(Screen.Playdate.createRoute(playdateId)) },
+                onChatClick = { chatId -> navController.navigate(Screen.Chat.createRoute(chatId)) },
+                onHealthAdvisorClick = { navController.navigate(Screen.HealthAdvisor.route) },
+                onSettingsClick = { navController.navigate(Screen.Settings.route) },
+                onPhotoManagementClick = { navController.navigate(Screen.PhotoManagement.route) },
+                onRatingClick = { navController.navigate(Screen.Rating.route) },
+                onNotificationsClick = { navController.navigate(Screen.Notifications.route) },
+                onSwipeClick = { navController.navigate(Screen.Swiping.route) },
+                onTrainerTipsClick = { navController.navigate(Screen.TrainerTips.route) },
+                onSwipeScreenClick = { navController.navigate(Screen.Swiping.route) },
+                onChatListClick = { navController.navigate(Screen.Chat.createRoute("")) },
+                onSchedulePlaydateClick = { navController.navigate(Screen.Playdate.createRoute("")) },
+                onPlaydateRequestsClick = { /* Add navigation or action for playdate requests */ },
+                onTrainerClick = { navController.navigate(Screen.TrainerTips.route) }
             )
         }
 
-        composable("user_profile") {
-            UserProfileScreen(
+
+        composable(
+            route = Screen.Profile.route,
+            arguments = listOf(navArgument("userId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val userId = backStackEntry.arguments?.getString("userId") ?: ""
+            ProfileScreen(
                 viewModel = profileViewModel,
+                userId = userId,
                 onBackClick = { navController.popBackStack() }
             )
         }
 
-        composable("dog_profile") {
+        composable(Screen.DogProfile.route) { backStackEntry ->
+            val dogId = backStackEntry.arguments?.getString("dogId") ?: ""
             DogProfileScreen(
                 viewModel = dogProfileViewModel,
                 onBackClick = { navController.popBackStack() }
             )
         }
 
-        composable("swiping_screen") {
-            SwipingScreen(
-                viewModel = swipingViewModel,
-                onSchedulePlaydate = { dogId -> navController.navigate("playdate_scheduling/$dogId") }
+
+        composable(Screen.Playdate.route) { backStackEntry ->
+            val playdateId = backStackEntry.arguments?.getString("playdateId") ?: ""
+            PlaydateScreen(
+                viewModel = playdateViewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onSchedulePlaydate = {
+                    // Navigate to a new screen for scheduling a playdate
+                    // or open a dialog for scheduling
+                    navController.navigate(Screen.Playdate.createRoute("new"))
+                }
             )
         }
 
-        composable("chat_list") {
-            ChatListScreen(
-                viewModel = chatViewModel,
-                navigateToChat = { chatId -> navController.navigate("chat/$chatId") },
-                onBackClick = { navController.popBackStack() }
-            )
-        }
 
-        composable("chat/{chatId}") { backStackEntry ->
-            val chatId = backStackEntry.arguments?.getString("chatId") ?: return@composable
+        composable(
+            route = Screen.Chat.route,
+            arguments = listOf(navArgument("chatId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val chatId = URLDecoder.decode(backStackEntry.arguments?.getString("chatId"), "UTF-8")
             ChatScreen(
                 chatId = chatId,
                 viewModel = chatViewModel,
@@ -185,66 +207,53 @@ fun AppNavigation(
             )
         }
 
-        composable("playdate_calendar") {
-            PlaydateCalendarScreen(
-                viewModel = playdateViewModel,
-                onBackClick = { navController.popBackStack() }
-            )
-        }
-
-        composable("playdate_requests") {
-            PlaydateRequestsScreen(
-                viewModel = playdateViewModel,
-                onBackClick = { navController.popBackStack() }
-            )
-        }
-
-        composable("playdate_scheduling/{dogId}") { backStackEntry ->
-            val dogId = backStackEntry.arguments?.getString("dogId") ?: return@composable
-            PlaydateSchedulingScreen(
-                viewModel = playdateViewModel,
-                profileId = dogId,
-                onBackClick = { navController.popBackStack() }
-            )
-        }
-
-        composable("trainer_tips") {
-            TrainerTipsScreen(
-                viewModel = trainerTipsViewModel,
-                onBackClick = { navController.popBackStack() }
-            )
-        }
-
-        composable("health_advisor") {
+        composable(Screen.HealthAdvisor.route) {
             HealthAdvisorScreen(
                 viewModel = healthAdvisorViewModel,
                 onBackClick = { navController.popBackStack() }
             )
         }
 
-        composable("settings") {
-            SettingsScreen(navController = navController)
-        }
-
-        composable("questionnaire") {
-            val userId = authViewModel.currentUser.value?.id ?: return@composable
-            QuestionnaireScreen(
-                viewModel = questionnaireViewModel,
-                userId = userId,
-                onComplete = {
-                    authViewModel.setQuestionnaireCompleted(true)
-                    navController.navigate("main_screen") {
-                        popUpTo("login") { inclusive = true }
-                    }
-                }
+        composable(Screen.Settings.route) {
+            SettingsScreen(
+                navController = navController,
+                viewModel = settingsViewModel
             )
         }
 
-        composable("notification_preferences") {
-            NotificationPreferencesScreen(
-                viewModel = settingsViewModel,
+        composable(Screen.PhotoManagement.route) {
+            PhotoManagementScreen(
+                viewModel = photoManagementViewModel,
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable(Screen.Rating.route) {
+            RatingScreen(
+                ratingId = "", // You might need to pass a ratingId
+                viewModel = ratingViewModel,
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Screen.Notifications.route) {
+            NotificationsScreen(
+                viewModel = notificationViewModel,
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+
+        @Composable
+        fun SwipingScreen(
+            viewModel: SwipingViewModel,
+            onSchedulePlaydate: (String) -> Unit
+        ) {
+
+
+        composable(Screen.TrainerTips.route) {
+            TrainerTipsScreen(
+                viewModel = trainerTipsViewModel,
                 onBackClick = { navController.popBackStack() }
             )
         }
     }
-}
+}}

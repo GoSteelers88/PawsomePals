@@ -1,7 +1,6 @@
 package com.example.pawsomepals.viewmodel
 
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.pawsomepals.data.model.DogFriendlyLocation
 import com.example.pawsomepals.data.model.DogProfile
@@ -14,13 +13,12 @@ import com.example.pawsomepals.service.LocationSuggestionService
 import com.google.android.gms.maps.model.LatLng
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.YearMonth
-import com.google.android.libraries.places.api.model.Place
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
-
 
 @HiltViewModel
 class PlaydateViewModel @Inject constructor(
@@ -61,8 +59,6 @@ class PlaydateViewModel @Inject constructor(
         }
     }
 
-
-
     private fun loadPlaydateRequests() {
         viewModelScope.launch {
             playdateRepository.getPlaydateRequests().collect {
@@ -70,6 +66,7 @@ class PlaydateViewModel @Inject constructor(
             }
         }
     }
+
     fun loadReceiverProfile(profileId: String) {
         viewModelScope.launch {
             _receiverProfile.value = userRepository.getDogProfileById(profileId)
@@ -93,11 +90,18 @@ class PlaydateViewModel @Inject constructor(
             }
         }
     }
+
     fun loadPlaydatesForMonth(yearMonth: YearMonth) {
         viewModelScope.launch {
             val startDate = yearMonth.atDay(1)
             val endDate = yearMonth.atEndOfMonth()
             _playdatesForMonth.value = playdateRepository.getPlaydatesForDateRange(startDate, endDate)
+        }
+    }
+
+    fun getPlaydatesForDate(date: LocalDate): List<PlaydateRequest> {
+        return _playdateRequests.value.filter { request ->
+            request.suggestedTimeslots.any { it == date.toEpochDay() }
         }
     }
 
@@ -135,22 +139,6 @@ class PlaydateViewModel @Inject constructor(
             } catch (e: Exception) {
                 _suggestedLocations.value = emptyList()
             }
-        }
-    }
-
-
-    class Factory(
-        private val playdateRepository: PlaydateRepository,
-        private val userRepository: UserRepository,
-        private val notificationManager: NotificationManager,
-        private val locationSuggestionService: LocationSuggestionService
-    ) : ViewModelProvider.Factory {
-        override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            if (modelClass.isAssignableFrom(PlaydateViewModel::class.java)) {
-                @Suppress("UNCHECKED_CAST")
-                return PlaydateViewModel(playdateRepository, userRepository, notificationManager, locationSuggestionService) as T
-            }
-            throw IllegalArgumentException("Unknown ViewModel class")
         }
     }
 }
