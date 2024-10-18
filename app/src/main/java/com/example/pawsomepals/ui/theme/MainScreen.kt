@@ -151,9 +151,7 @@ fun MainScreen(
                     Button(
                         onClick = {
                             showLogoutDialog = false
-                            navController.navigate("login") {
-                                popUpTo("main_screen") { inclusive = true }
-                            }
+                            onLogout()
                         }
                     ) {
                         Text("Yes")

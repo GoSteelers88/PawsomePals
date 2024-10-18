@@ -1,7 +1,10 @@
 package com.example.pawsomepals.ui.theme
 
-import android.content.IntentSender
+import android.app.Activity
+import android.util.Log
 import android.util.Patterns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -11,28 +14,26 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavController
 import com.example.pawsomepals.R
-import kotlinx.coroutines.delay
+import com.example.pawsomepals.Screen
+import com.example.pawsomepals.viewmodel.AuthViewModel
 
 @Composable
-fun LoginScreen(
-    onLoginClick: (String, String) -> Unit,
-    onRegisterClick: () -> Unit,
-    onGoogleSignInClick: () -> Unit,
-    onFacebookSignInClick: () -> Unit,
-    onGoogleSignInIntentReceived: (IntentSender) -> Unit,
-    googleSignInIntent: IntentSender?,
-    isLoading: Boolean = false,
-    errorMessage: String? = null
-) {
+fun LoginScreen(authViewModel: AuthViewModel, navController: NavController) {
+    val authState by authViewModel.authState.collectAsState()
+    val isLoading by authViewModel.isLoading.collectAsState()
+    val errorMessage by authViewModel.errorMessage.collectAsState()
+    val googleSignInIntent by authViewModel.googleSignInIntent.collectAsState()
+
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var isEmailError by remember { mutableStateOf(false) }
@@ -40,22 +41,42 @@ fun LoginScreen(
     var emailErrorMessage by remember { mutableStateOf("") }
     var passwordErrorMessage by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
-    var showSuccessMessage by remember { mutableStateOf(false) }
 
-    val context = LocalContext.current
     val scrollState = rememberScrollState()
 
-    LaunchedEffect(googleSignInIntent) {
-        googleSignInIntent?.let { intentSender ->
-            onGoogleSignInIntentReceived(intentSender)
+    val googleSignInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            result.data?.let { intent ->
+                Log.d("LoginScreen", "Google Sign-In successful, handling result")
+                authViewModel.handleGoogleSignInResult(intent)
+            } ?: run {
+                Log.e("LoginScreen", "Google Sign-In failed: Intent is null")
+            }
+        } else {
+            Log.d("LoginScreen", "Google Sign-In was canceled or failed with resultCode: ${result.resultCode}")
         }
     }
 
-    LaunchedEffect(isLoading) {
-        if (!isLoading && errorMessage == null) {
-            showSuccessMessage = true
-            delay(2000)
-            showSuccessMessage = false
+    LaunchedEffect(googleSignInIntent) {
+        googleSignInIntent?.let { intent ->
+            googleSignInLauncher.launch(intent)
+        }
+    }
+    LaunchedEffect(authState) {
+        when (authState) {
+            is AuthViewModel.AuthState.Authenticated -> {
+                navController.navigate(Screen.MainScreen.route) {
+                    popUpTo(Screen.Login.route) { inclusive = true }
+                }
+            }
+            is AuthViewModel.AuthState.Unauthenticated -> {
+                // Do nothing, stay on login screen
+            }
+            is AuthViewModel.AuthState.Initial -> {
+                // Do nothing, waiting for auth state to be determined
+            }
         }
     }
 
@@ -109,7 +130,7 @@ fun LoginScreen(
             },
             label = { Text("Password") },
             isError = isPasswordError,
-            visualTransformation = if (showPassword) PasswordVisualTransformation() else PasswordVisualTransformation(),
+            visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             modifier = Modifier
                 .fillMaxWidth()
@@ -154,7 +175,7 @@ fun LoginScreen(
                         isPasswordError = true
                         passwordErrorMessage = "Password must be at least 6 characters"
                     }
-                    else -> onLoginClick(email, password)
+                    else -> authViewModel.loginUser(email, password)
                 }
             },
             modifier = Modifier
@@ -185,7 +206,8 @@ fun LoginScreen(
 
         Button(
             onClick = {
-                onGoogleSignInClick()
+                authViewModel.beginGoogleSignIn()
+                authViewModel.setErrorMessage(null)
             },
             modifier = Modifier
                 .fillMaxWidth()
@@ -205,7 +227,7 @@ fun LoginScreen(
         Spacer(modifier = Modifier.height(16.dp))
 
         Button(
-            onClick = onFacebookSignInClick,
+            onClick = { authViewModel.beginFacebookSignIn() },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(50.dp)
@@ -223,19 +245,20 @@ fun LoginScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        AnimatedVisibility(visible = errorMessage != null || showSuccessMessage) {
+        AnimatedVisibility(visible = errorMessage != null) {
             Text(
-                text = if (showSuccessMessage) "Login Successful!" else errorMessage ?: "",
-                color = if (showSuccessMessage) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                text = errorMessage ?: "",
+                color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 8.dp)
             )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
         TextButton(
-            onClick = onRegisterClick,
+            onClick = { navController.navigate("register") },
             modifier = Modifier.semantics { contentDescription = "Register Button" }
         ) {
             Text("Don't have an account? Register")

@@ -5,6 +5,7 @@ import com.aallam.openai.client.OpenAI
 import com.example.pawsomepals.BuildConfig
 import com.example.pawsomepals.R
 import com.example.pawsomepals.ai.AIFeatures
+import com.example.pawsomepals.auth.GoogleAuthManager
 import com.example.pawsomepals.data.AppDatabase
 import com.example.pawsomepals.data.dao.PhotoDao
 import com.example.pawsomepals.data.dao.SettingsDao
@@ -32,7 +33,6 @@ import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
 import dagger.Module
@@ -58,6 +58,7 @@ object AppModule {
     fun provideFirebaseDatabase(): FirebaseDatabase {
         return FirebaseDatabase.getInstance()
     }
+
 
     @Provides
     @Singleton
@@ -85,8 +86,8 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideNotificationRepository(firestore: FirebaseFirestore): NotificationRepository {
-        return NotificationRepository(firestore)
+    fun provideNotificationRepository(firestore: FirebaseFirestore, auth: FirebaseAuth): NotificationRepository {
+        return NotificationRepository(firestore, auth)
     }
 
     @Provides
@@ -216,9 +217,18 @@ object AppModule {
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestIdToken(context.getString(R.string.default_web_client_id))
             .requestEmail()
+            .setAccountName(null.toString())  // This allows selecting any account
             .build()
         return GoogleSignIn.getClient(context, gso)
     }
+
+    @Provides
+    @Singleton
+    fun provideGoogleAuthManager(
+        @ApplicationContext context: Context,
+        firebaseAuth: FirebaseAuth
+    ): GoogleAuthManager = GoogleAuthManager(context, firebaseAuth)
+
 
     @Provides
     @Singleton

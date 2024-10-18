@@ -1,7 +1,9 @@
 package com.example.pawsomepals.viewmodel
 
+import android.content.Context
 import android.content.Intent
 import android.content.IntentSender
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.pawsomepals.data.model.User
@@ -17,20 +19,32 @@ import com.google.firebase.auth.FacebookAuthProvider
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
+import com.example.pawsomepals.auth.GoogleAuthManager
+
 
 @HiltViewModel
 class AuthViewModel @Inject constructor(
     private val userRepository: UserRepository,
     private val authRepository: AuthRepository,
     private val recaptchaManager: RecaptchaManager,
-    private val facebookCallbackManager: CallbackManager
+    private val facebookCallbackManager: CallbackManager,
+    @ApplicationContext private val context: Context,
+    private val googleAuthManager: GoogleAuthManager
+
+
 ) : ViewModel() {
+    sealed class AuthState {
+        object Initial : AuthState()
+        object Authenticated : AuthState()
+        object Unauthenticated : AuthState()
+    }
 
     private val auth: FirebaseAuth = FirebaseAuth.getInstance()
 
@@ -39,14 +53,18 @@ class AuthViewModel @Inject constructor(
 
 
 
+
+    private val _authState = MutableStateFlow<AuthState>(AuthState.Initial)
+    val authState: StateFlow<AuthState> = _authState.asStateFlow()
+
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    private val _googleSignInIntent = MutableStateFlow<IntentSender?>(null)
-    val googleSignInIntent: StateFlow<IntentSender?> = _googleSignInIntent.asStateFlow()
+    private val _googleSignInIntent = MutableStateFlow<Intent?>(null)
+    val googleSignInIntent: StateFlow<Intent?> = _googleSignInIntent.asStateFlow()
 
     private val _hasAcceptedTerms = MutableStateFlow(false)
     val hasAcceptedTerms: StateFlow<Boolean> = _hasAcceptedTerms.asStateFlow()
@@ -55,11 +73,23 @@ class AuthViewModel @Inject constructor(
     val hasCompletedQuestionnaire: StateFlow<Boolean> = _hasCompletedQuestionnaire.asStateFlow()
 
     init {
-        auth.currentUser?.let { firebaseUser ->
-            viewModelScope.launch {
-                _currentUser.value = userRepository.getUserByEmail(firebaseUser.email ?: "")
-                _hasAcceptedTerms.value = _currentUser.value?.hasAcceptedTerms ?: false
-                _hasCompletedQuestionnaire.value = _currentUser.value?.hasCompletedQuestionnaire ?: false
+        viewModelScope.launch {
+            _authState.value = AuthState.Initial
+            auth.addAuthStateListener { firebaseAuth ->
+                val user = firebaseAuth.currentUser
+                if (user != null) {
+                    viewModelScope.launch {
+                        _currentUser.value = userRepository.getUserByEmail(user.email ?: "")
+                        _hasAcceptedTerms.value = _currentUser.value?.hasAcceptedTerms ?: false
+                        _hasCompletedQuestionnaire.value = _currentUser.value?.hasCompletedQuestionnaire ?: false
+                        _authState.value = AuthState.Authenticated
+                    }
+                } else {
+                    _currentUser.value = null
+                    _hasAcceptedTerms.value = false
+                    _hasCompletedQuestionnaire.value = false
+                    _authState.value = AuthState.Unauthenticated
+                }
             }
         }
     }
@@ -67,6 +97,8 @@ class AuthViewModel @Inject constructor(
     fun setErrorMessage(message: String?) {
         _errorMessage.value = message
     }
+
+
 
     fun loginUser(email: String, password: String) {
         viewModelScope.launch {
@@ -80,14 +112,18 @@ class AuthViewModel @Inject constructor(
                         val firebaseUser = signInResult.getOrThrow()
                         val user = createOrUpdateLocalUser(firebaseUser)
                         _currentUser.value = user
+                        _authState.value = AuthState.Authenticated
                     } else {
                         _errorMessage.value = signInResult.exceptionOrNull()?.message ?: "Authentication failed"
+                        _authState.value = AuthState.Unauthenticated
                     }
                 } else {
                     _errorMessage.value = "reCAPTCHA verification failed"
+                    _authState.value = AuthState.Unauthenticated
                 }
             } catch (e: Exception) {
                 _errorMessage.value = "Authentication failed: ${e.message}"
+                _authState.value = AuthState.Unauthenticated
             } finally {
                 _isLoading.value = false
             }
@@ -129,7 +165,7 @@ class AuthViewModel @Inject constructor(
             _isLoading.value = true
             _errorMessage.value = null
             try {
-                val result = authRepository.beginSignIn()
+                val result = googleAuthManager.beginSignIn()
                 if (result.isSuccess) {
                     _googleSignInIntent.value = result.getOrNull()
                 } else {
@@ -144,22 +180,36 @@ class AuthViewModel @Inject constructor(
     }
 
 
-    fun handleGoogleSignInResult(data: Intent?) {
+    fun handleGoogleSignInResult(data: Intent) {
         viewModelScope.launch {
+            _isLoading.value = true
+            _errorMessage.value = null
             try {
-                val result = authRepository.handleSignInResult(data!!)
-                if (result.isSuccess) {
-                    val firebaseUser = result.getOrThrow()
-                    val user = createOrUpdateLocalUser(firebaseUser)
-                    _currentUser.value = user
+                val idTokenResult = googleAuthManager.handleSignInResult(data)
+                if (idTokenResult.isSuccess) {
+                    val idToken = idTokenResult.getOrNull()
+                    if (idToken != null) {
+                        val firebaseAuthResult = googleAuthManager.firebaseAuthWithGoogle(idToken)
+                        if (firebaseAuthResult.isSuccess) {
+                            // Handle successful sign-in (e.g., update UI, navigate to main screen)
+                        } else {
+                            _errorMessage.value = firebaseAuthResult.exceptionOrNull()?.message ?: "Firebase authentication failed"
+                        }
+                    } else {
+                        _errorMessage.value = "No ID token found"
+                    }
                 } else {
-                    _errorMessage.value = result.exceptionOrNull()?.message ?: "Google Sign-In failed"
+                    _errorMessage.value = idTokenResult.exceptionOrNull()?.message ?: "Failed to get ID token"
                 }
             } catch (e: Exception) {
                 _errorMessage.value = "Google Sign-In failed: ${e.message}"
+            } finally {
+                _isLoading.value = false
+                _googleSignInIntent.value = null
             }
         }
     }
+
 
     fun beginFacebookSignIn() {
         LoginManager.getInstance().registerCallback(facebookCallbackManager,
@@ -180,7 +230,7 @@ class AuthViewModel @Inject constructor(
         // LoginManager.getInstance().logInWithReadPermissions(activity, listOf("email", "public_profile"))
     }
 
-    private fun handleFacebookAccessToken(token: String) {
+    fun handleFacebookAccessToken(token: String) {
         viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
@@ -224,11 +274,12 @@ class AuthViewModel @Inject constructor(
 
     fun logOut() {
         viewModelScope.launch {
-            authRepository.signOut()
-            _currentUser.value = null
-            _hasAcceptedTerms.value = false
-            _hasCompletedQuestionnaire.value = false
-            LoginManager.getInstance().logOut()
+            try {
+                googleAuthManager.signOut()
+                // Handle successful sign-out (e.g., update UI, navigate to login screen)
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to log out: ${e.message}"
+            }
         }
     }
 
@@ -248,6 +299,7 @@ class AuthViewModel @Inject constructor(
                 hasCompletedQuestionnaire = false
             ).also { userRepository.insertUser(it) }
     }
+
 
     fun clearErrorMessage() {
         _errorMessage.value = null

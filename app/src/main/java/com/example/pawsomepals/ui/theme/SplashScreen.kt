@@ -13,17 +13,32 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.example.pawsomepals.R
+import com.example.pawsomepals.Screen
+import com.example.pawsomepals.viewmodel.AuthViewModel
 import kotlinx.coroutines.delay
 
 @Composable
-fun SplashScreen(navController: NavController) {
-    var isLoading by remember { mutableStateOf(true) }
+fun SplashScreen(
+    authViewModel: AuthViewModel,
+    navController: NavController
+) {
+    val authState by authViewModel.authState.collectAsState()
 
-    LaunchedEffect(key1 = true) {
-        delay(2000) // 2 seconds delay
-        isLoading = false
-        navController.navigate("login") {
-            popUpTo("splash") { inclusive = true }
+    LaunchedEffect(authState) {
+        when (authState) {
+            is AuthViewModel.AuthState.Authenticated -> {
+                navController.navigate(Screen.MainScreen.route) {
+                    popUpTo(Screen.Splash.route) { inclusive = true }
+                }
+            }
+            is AuthViewModel.AuthState.Unauthenticated -> {
+                navController.navigate(Screen.Login.route) {
+                    popUpTo(Screen.Splash.route) { inclusive = true }
+                }
+            }
+            AuthViewModel.AuthState.Initial -> {
+                // Wait for auth state to be determined
+            }
         }
     }
 
@@ -43,8 +58,6 @@ fun SplashScreen(navController: NavController) {
             style = MaterialTheme.typography.headlineMedium
         )
         Spacer(modifier = Modifier.height(32.dp))
-        if (isLoading) {
-            CircularProgressIndicator()
-        }
+        CircularProgressIndicator()
     }
 }

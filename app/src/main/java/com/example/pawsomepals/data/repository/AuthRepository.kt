@@ -2,7 +2,10 @@ package com.example.pawsomepals.data.repository
 
 import android.content.Context
 import android.content.IntentSender
+import android.util.Log
+import com.example.pawsomepals.R
 import com.example.pawsomepals.utils.RecaptchaManager
+import com.example.pawsomepals.utils.retryWithExponentialBackoff
 import com.google.android.gms.auth.api.identity.BeginSignInRequest
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.auth.api.identity.SignInClient
@@ -35,18 +38,22 @@ class AuthRepository @Inject constructor(
                     .setGoogleIdTokenRequestOptions(
                         BeginSignInRequest.GoogleIdTokenRequestOptions.builder()
                             .setSupported(true)
-                            .setServerClientId(context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName)))
-                            .setFilterByAuthorizedAccounts(true)
-                            .build())
+                            .setServerClientId(context.getString(R.string.default_web_client_id))
+                            .setFilterByAuthorizedAccounts(false)  // This ensures all accounts are shown
+                            .build()
+                    )
+                    .setAutoSelectEnabled(false)  // This disables auto-select
                     .build()
 
                 val result = oneTapClient.beginSignIn(signInRequest).await()
                 Result.success(result.pendingIntent.intentSender)
             } catch (e: Exception) {
+                Log.e("AuthRepository", "Error in beginSignIn", e)
                 Result.failure(e)
             }
         }
     }
+
 
     suspend fun handleSignInResult(data: android.content.Intent): Result<FirebaseUser> {
         return withContext(Dispatchers.IO) {
@@ -55,17 +62,23 @@ class AuthRepository @Inject constructor(
                 val idToken = credential.googleIdToken
                 when {
                     idToken != null -> {
+                        Log.d("AuthRepository", "Got ID token")
                         val firebaseCredential = GoogleAuthProvider.getCredential(idToken, null)
-                        val authResult = auth.signInWithCredential(firebaseCredential).await()
+                        val authResult = retryWithExponentialBackoff {
+                            auth.signInWithCredential(firebaseCredential).await()
+                        }
                         val user = authResult.user!!
                         saveUserToFirestore(user)
+                        Log.d("AuthRepository", "handleSignInResult successful")
                         Result.success(user)
                     }
                     else -> {
+                        Log.e("AuthRepository", "No ID token!")
                         Result.failure(Exception("No ID token!"))
                     }
                 }
             } catch (e: ApiException) {
+                Log.e("AuthRepository", "ApiException in handleSignInResult", e)
                 Result.failure(e)
             }
         }
@@ -91,12 +104,19 @@ class AuthRepository @Inject constructor(
     suspend fun signInWithEmailAndPassword(email: String, password: String): Result<FirebaseUser> {
         return withContext(Dispatchers.IO) {
             try {
-                val result = auth.signInWithEmailAndPassword(email, password).await()
+                val result = retryWithExponentialBackoff {
+                    auth.signInWithEmailAndPassword(email, password).await()
+                }
                 result.user?.let {
                     saveUserToFirestore(it)
+                    Log.d("AuthRepository", "signInWithEmailAndPassword successful")
                     Result.success(it)
-                } ?: Result.failure(Exception("Authentication failed: User is null"))
+                } ?: run {
+                    Log.e("AuthRepository", "Authentication failed: User is null")
+                    Result.failure(Exception("Authentication failed: User is null"))
+                }
             } catch (e: Exception) {
+                Log.e("AuthRepository", "Error in signInWithEmailAndPassword", e)
                 Result.failure(e)
             }
         }
@@ -123,8 +143,18 @@ class AuthRepository @Inject constructor(
             try {
                 oneTapClient.signOut().await()
                 auth.signOut()
+                // Clear any local user data if necessary
             } catch (e: Exception) {
-                // Handle sign out error
+                Log.e("AuthRepository", "Error during sign out", e)
+            }
+        }
+    }
+    suspend fun signOutGoogle() {
+        withContext(Dispatchers.IO) {
+            try {
+                oneTapClient.signOut().await()
+            } catch (e: Exception) {
+                Log.e("AuthRepository", "Error signing out from Google", e)
             }
         }
     }
@@ -150,6 +180,13 @@ class AuthRepository @Inject constructor(
             "displayName" to user.displayName,
             "photoUrl" to user.photoUrl?.toString()
         )
-        firestore.collection("users").document(user.uid).set(userMap).await()
+        try {
+            retryWithExponentialBackoff {
+                firestore.collection("users").document(user.uid).set(userMap).await()
+            }
+            Log.d("AuthRepository", "User saved to Firestore successfully")
+        } catch (e: Exception) {
+            Log.e("AuthRepository", "Error saving user to Firestore", e)
+        }
     }
 }

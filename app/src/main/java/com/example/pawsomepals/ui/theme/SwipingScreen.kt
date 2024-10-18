@@ -48,11 +48,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil.compose.rememberAsyncImagePainter
 import com.example.pawsomepals.data.model.DogProfile
-import com.example.pawsomepals.viewmodel.SwipeViewModel
+import com.example.pawsomepals.viewmodel.SwipingViewModel
 
 @Composable
 fun SwipingScreen(
-    viewModel: SwipeViewModel,
+    viewModel: SwipingViewModel,
     onSchedulePlaydate: (String) -> Unit
 ) {
     val currentProfile by viewModel.currentProfile.collectAsState()

@@ -1,10 +1,8 @@
 package com.example.pawsomepals
 
-
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.compose.runtime.*
-
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -14,6 +12,7 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
+import com.example.pawsomepals.ui.theme.SplashScreen
 
 sealed class Screen(val route: String) {
     object Splash : Screen("splash")
@@ -64,20 +63,20 @@ fun AppNavigation(
 ) {
     val navController = rememberNavController()
 
-    NavHost(navController = navController, startDestination = Screen.Login.route) {
-        composable(Screen.Login.route) {
-            LoginScreen(
-                onLoginClick = { email, password -> authViewModel.loginUser(email, password) },
-                onRegisterClick = { navController.navigate(Screen.Register.route) },
-                onGoogleSignInClick = { authViewModel.beginGoogleSignIn() },
-                onFacebookSignInClick = { authViewModel.beginFacebookSignIn() },
-                onGoogleSignInIntentReceived = { /* Handle this if needed */ },
-                googleSignInIntent = null, // You might need to expose this from AuthViewModel
-                isLoading = authViewModel.isLoading.collectAsState().value,
-                errorMessage = authViewModel.errorMessage.collectAsState().value
+    NavHost(navController = navController, startDestination = Screen.Splash.route) {
+        composable(Screen.Splash.route) {
+            SplashScreen(
+                authViewModel = authViewModel,
+                navController = navController
             )
         }
 
+        composable(Screen.Login.route) {
+            LoginScreen(
+                authViewModel = authViewModel,
+                navController = navController
+            )
+        }
 
         composable(Screen.Register.route) {
             RegisterScreen(
@@ -159,7 +158,6 @@ fun AppNavigation(
             )
         }
 
-
         composable(
             route = Screen.Profile.route,
             arguments = listOf(navArgument("userId") { type = NavType.StringType })
@@ -180,20 +178,16 @@ fun AppNavigation(
             )
         }
 
-
         composable(Screen.Playdate.route) { backStackEntry ->
             val playdateId = backStackEntry.arguments?.getString("playdateId") ?: ""
             PlaydateScreen(
                 viewModel = playdateViewModel,
                 onNavigateBack = { navController.popBackStack() },
                 onSchedulePlaydate = {
-                    // Navigate to a new screen for scheduling a playdate
-                    // or open a dialog for scheduling
                     navController.navigate(Screen.Playdate.createRoute("new"))
                 }
             )
         }
-
 
         composable(
             route = Screen.Chat.route,
@@ -227,9 +221,10 @@ fun AppNavigation(
                 onNavigateBack = { navController.popBackStack() }
             )
         }
+
         composable(Screen.Rating.route) {
             RatingScreen(
-                ratingId = "", // You might need to pass a ratingId
+                ratingId = "",
                 viewModel = ratingViewModel,
                 onNavigateBack = { navController.popBackStack() }
             )
@@ -242,12 +237,14 @@ fun AppNavigation(
             )
         }
 
-        @Composable
-        fun SwipingScreen(
-            viewModel: SwipingViewModel,
-            onSchedulePlaydate: (String) -> Unit
-        ) {
-
+        composable(Screen.Swiping.route) {
+            SwipingScreen(
+                viewModel = swipingViewModel,
+                onSchedulePlaydate = { playdateId ->
+                    navController.navigate(Screen.Playdate.createRoute(playdateId))
+                }
+            )
+        }
 
         composable(Screen.TrainerTips.route) {
             TrainerTipsScreen(
@@ -256,4 +253,4 @@ fun AppNavigation(
             )
         }
     }
-}}
+}

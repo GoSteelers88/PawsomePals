@@ -15,8 +15,12 @@ import com.example.pawsomepals.service.MatchingService
 import com.example.pawsomepals.utils.RecaptchaManager
 import com.facebook.CallbackManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import android.content.Context
+import com.example.pawsomepals.auth.GoogleAuthManager
+
 
 @Singleton
 class ViewModelFactory @Inject constructor(
@@ -31,7 +35,11 @@ class ViewModelFactory @Inject constructor(
     private val authRepository: AuthRepository,
     private val recaptchaManager: RecaptchaManager,
     private val facebookCallbackManager: CallbackManager,
-    private val application: Application
+    private val application: Application,
+    @ApplicationContext private val context: Context,
+    private val googleAuthManager: GoogleAuthManager
+
+
 ) : ViewModelProvider.Factory {
 
     @Suppress("UNCHECKED_CAST")
@@ -42,7 +50,10 @@ class ViewModelFactory @Inject constructor(
                     userRepository,
                     authRepository,
                     recaptchaManager,
-                    facebookCallbackManager
+                    facebookCallbackManager,
+                    context,
+                    googleAuthManager
+
                 ) as T
 
             modelClass.isAssignableFrom(ProfileViewModel::class.java) ->
