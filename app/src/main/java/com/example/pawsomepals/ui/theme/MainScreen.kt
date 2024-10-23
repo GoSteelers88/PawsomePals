@@ -8,8 +8,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -39,7 +39,6 @@ import com.example.pawsomepals.viewmodel.ProfileViewModel
 import com.example.pawsomepals.viewmodel.RatingViewModel
 import com.example.pawsomepals.viewmodel.SettingsViewModel
 import com.example.pawsomepals.viewmodel.SwipingViewModel
-import com.example.pawsomepals.viewmodel.TrainerTipsViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,7 +55,6 @@ fun MainScreen(
     ratingViewModel: RatingViewModel,
     notificationViewModel: NotificationViewModel,
     swipingViewModel: SwipingViewModel,
-    trainerTipsViewModel: TrainerTipsViewModel,
     onLogout: () -> Unit,
     onProfileClick: (String) -> Unit,
     onDogProfileClick: () -> Unit,
@@ -68,12 +66,10 @@ fun MainScreen(
     onRatingClick: () -> Unit,
     onNotificationsClick: () -> Unit,
     onSwipeClick: () -> Unit,
-    onTrainerTipsClick: () -> Unit,
     onSwipeScreenClick: () -> Unit,
     onChatListClick: () -> Unit,
     onSchedulePlaydateClick: () -> Unit,
-    onPlaydateRequestsClick: () -> Unit,
-    onTrainerClick: () -> Unit
+    onPlaydateRequestsClick: () -> Unit
 ) {
     var showLogoutDialog by remember { mutableStateOf(false) }
 
@@ -83,76 +79,192 @@ fun MainScreen(
                 title = { Text("Pawsome Pals!") },
                 actions = {
                     IconButton(onClick = onSwipeClick) {
-                        Icon(painter = painterResource(id = R.drawable.ic_swipe), contentDescription = "Swipe Screen")
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_swipe),
+                            contentDescription = "Swipe Screen"
+                        )
                     }
                     IconButton(onClick = { onProfileClick("") }) {
-                        Icon(painter = painterResource(id = R.drawable.ic_profile), contentDescription = "User Profile")
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_profile),
+                            contentDescription = "User Profile"
+                        )
                     }
                     IconButton(onClick = onNotificationsClick) {
-                        Icon(painter = painterResource(id = R.drawable.ic_notifications), contentDescription = "Notifications")
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_notifications),
+                            contentDescription = "Notifications"
+                        )
                     }
                     IconButton(onClick = onSettingsClick) {
-                        Icon(painter = painterResource(id = R.drawable.ic_settings), contentDescription = "Settings")
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_settings),
+                            contentDescription = "Settings"
+                        )
                     }
                 }
             )
-        },
-        bottomBar = {
-            BottomAppBar {
-                IconButton(onClick = onDogProfileClick) {
-                    Icon(painter = painterResource(id = R.drawable.ic_dog), contentDescription = "Dog Profile")
-                }
-                IconButton(onClick = { onChatClick("") }) {
-                    Icon(painter = painterResource(id = R.drawable.ic_chat), contentDescription = "Chat List")
-                }
-                IconButton(onClick = { onPlaydateClick("") }) {
-                    Icon(painter = painterResource(id = R.drawable.ic_calendar), contentDescription = "Schedule Playdate")
-                }
-                IconButton(onClick = onPhotoManagementClick) {
-                    Icon(painter = painterResource(id = R.drawable.ic_photo), contentDescription = "Photo Management")
-                }
-            }
         }
     ) { paddingValues ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(16.dp)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp) // Increased spacing
         ) {
-            Text("Welcome, $username!", style = MaterialTheme.typography.headlineSmall)
-            Spacer(modifier = Modifier.height(16.dp))
-            Text("Here you'll see potential playdate matches for your dog.")
-            Spacer(modifier = Modifier.height(16.dp))
+            // Welcome Section with enhanced styling
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+            ) {
+                Text(
+                    text = "Welcome, $username!",
+                    style = MaterialTheme.typography.headlineMedium, // Larger text
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Find the perfect playdate for your furry friend!",
+                    style = MaterialTheme.typography.bodyLarge, // Larger body text
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
-            MainScreenButton(text = "Go to Swipe Screen", onClick = onSwipeScreenClick, iconResId = R.drawable.ic_swipe)
-            MainScreenButton(text = "View Chats", onClick = onChatListClick, iconResId = R.drawable.ic_chat)
-            MainScreenButton(text = "Schedule Playdate", onClick = onSchedulePlaydateClick, iconResId = R.drawable.ic_calendar)
-            MainScreenButton(text = "View Playdate Requests", onClick = onPlaydateRequestsClick, iconResId = R.drawable.ic_requests)
-            MainScreenButton(text = "Dog Trainer", onClick = onTrainerClick, iconResId = R.drawable.ic_trainer)
-            MainScreenButton(text = "Health Advisor", onClick = onHealthAdvisorClick, iconResId = R.drawable.ic_health)
-            MainScreenButton(text = "Rate Your Experience", onClick = onRatingClick, iconResId = R.drawable.ic_rating)
+            // Primary Actions Section
+            Text(
+                text = "Quick Actions",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 8.dp)
+            )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            // Main Grid Layout
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp) // Increased spacing
+            ) {
+                // Top Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    MainScreenButtonLarge(
+                        text = "Find Playdates",
+                        onClick = onSwipeScreenClick,
+                        iconResId = R.drawable.ic_swipe,
+                        modifier = Modifier.weight(1f)
+                    )
+                    MainScreenButtonLarge(
+                        text = "My Dog",
+                        onClick = onDogProfileClick,
+                        iconResId = R.drawable.ic_dog,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // Bottom Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    MainScreenButtonLarge(
+                        text = "Messages",
+                        onClick = onChatListClick,
+                        iconResId = R.drawable.ic_chat,
+                        modifier = Modifier.weight(1f)
+                    )
+                    MainScreenButtonLarge(
+                        text = "Schedule",
+                        onClick = onSchedulePlaydateClick,
+                        iconResId = R.drawable.ic_calendar,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+
+            // Additional Features Section
+            Text(
+                text = "More Features",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+
+            // Features Grid
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    MainScreenButtonMedium(
+                        text = "Requests",
+                        onClick = onPlaydateRequestsClick,
+                        iconResId = R.drawable.ic_requests,
+                        modifier = Modifier.weight(1f)
+                    )
+                    MainScreenButtonMedium(
+                        text = "Health",
+                        onClick = onHealthAdvisorClick,
+                        iconResId = R.drawable.ic_health,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    MainScreenButtonMedium(
+                        text = "Photos",
+                        onClick = onPhotoManagementClick,
+                        iconResId = R.drawable.ic_photo,
+                        modifier = Modifier.weight(1f)
+                    )
+                    MainScreenButtonMedium(
+                        text = "Rate Us",
+                        onClick = onRatingClick,
+                        iconResId = R.drawable.ic_rating,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            // Logout Button
             Button(
                 onClick = { showLogoutDialog = true },
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
             ) {
-                Text("Logout")
+                Text("Logout", style = MaterialTheme.typography.titleMedium)
             }
         }
 
+        // Logout Dialog
         if (showLogoutDialog) {
             AlertDialog(
                 onDismissRequest = { showLogoutDialog = false },
-                title = { Text("Logout") },
+                title = { Text("Logout", style = MaterialTheme.typography.titleLarge) },
                 text = { Text("Are you sure you want to logout?") },
                 confirmButton = {
                     Button(
                         onClick = {
                             showLogoutDialog = false
                             onLogout()
-                        }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        )
                     ) {
                         Text("Yes")
                     }
@@ -168,23 +280,75 @@ fun MainScreen(
 }
 
 @Composable
-fun MainScreenButton(text: String, onClick: () -> Unit, iconResId: Int) {
+fun MainScreenButtonLarge(
+    text: String,
+    onClick: () -> Unit,
+    iconResId: Int,
+    modifier: Modifier = Modifier
+) {
     Button(
         onClick = onClick,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
+        modifier = modifier
+            .height(120.dp) // Increased height
+            .padding(vertical = 4.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        ),
+        shape = MaterialTheme.shapes.medium
     ) {
-        Row(
-            horizontalArrangement = Arrangement.Start,
-            modifier = Modifier.fillMaxWidth()
+        Column(
+            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
             Icon(
                 painter = painterResource(id = iconResId),
                 contentDescription = null,
-                modifier = Modifier.padding(end = 8.dp)
+                modifier = Modifier
+                    .size(40.dp) // Larger icon
+                    .padding(bottom = 8.dp)
             )
-            Text(text)
+            Text(
+                text = text,
+                style = MaterialTheme.typography.titleMedium // Larger text
+            )
+        }
+    }
+}
+
+@Composable
+fun MainScreenButtonMedium(
+    text: String,
+    onClick: () -> Unit,
+    iconResId: Int,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier
+            .height(80.dp)
+            .padding(vertical = 4.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+        ),
+        shape = MaterialTheme.shapes.medium
+    ) {
+        Column(
+            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                painter = painterResource(id = iconResId),
+                contentDescription = null,
+                modifier = Modifier
+                    .size(24.dp)
+                    .padding(bottom = 4.dp)
+            )
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelLarge
+            )
         }
     }
 }

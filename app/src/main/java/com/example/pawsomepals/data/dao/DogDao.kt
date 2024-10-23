@@ -25,6 +25,9 @@ interface DogDao {
     @Delete
     suspend fun deleteDog(dog: Dog)
 
+    @Query("DELETE FROM dogs WHERE id = :dogId")
+    suspend fun deleteDogById(dogId: String)
+
     @Query("SELECT * FROM dogs WHERE id NOT IN (SELECT swipedId FROM swipes WHERE swiperId = :userId) AND ownerId != :userId LIMIT 1")
     suspend fun getNextUnseenDogProfile(userId: String): Dog?
 }

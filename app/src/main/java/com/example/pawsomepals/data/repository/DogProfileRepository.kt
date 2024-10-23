@@ -1,6 +1,6 @@
 package com.example.pawsomepals.data.repository
 
-import com.example.pawsomepals.data.model.DogProfile
+import com.example.pawsomepals.data.model.Dog
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -15,33 +15,40 @@ class DogProfileRepository @Inject constructor(
 ) {
     private val dogProfilesCollection = firestore.collection("dogProfiles")
 
-    suspend fun createDogProfile(dogProfile: DogProfile): DogProfile {
+    suspend fun createDogProfile(dog: Dog): Dog {
         val newDogRef = dogProfilesCollection.document()
-        dogProfile.id = newDogRef.id
-        newDogRef.set(dogProfile).await()
-        return dogProfile
+        dog.id = newDogRef.id
+        newDogRef.set(dog).await()
+        return dog
     }
 
-    fun getDogProfile(dogId: String): Flow<DogProfile?> = flow {
+    suspend fun updateDogPhotoUrls(dogId: String, photoUrls: List<String?>) {
+        val updates = mapOf(
+            "photoUrls" to photoUrls
+        )
+        dogProfilesCollection.document(dogId).update(updates).await()
+    }
+
+    fun getDogProfile(dogId: String): Flow<Dog?> = flow {
         emit(getDogProfileById(dogId))
     }
 
-    suspend fun getDogProfileById(dogId: String): DogProfile? {
+    suspend fun getDogProfileById(dogId: String): Dog? {
         val snapshot = dogProfilesCollection.document(dogId).get().await()
-        return snapshot.toObject(DogProfile::class.java)
+        return snapshot.toObject(Dog::class.java)
     }
 
-    suspend fun getCurrentUserDogProfile(userId: String): DogProfile? {
+    suspend fun getCurrentUserDogProfile(userId: String): Dog? {
         val snapshot = dogProfilesCollection.whereEqualTo("ownerId", userId).limit(1).get().await()
-        return snapshot.documents.firstOrNull()?.toObject(DogProfile::class.java)
+        return snapshot.documents.firstOrNull()?.toObject(Dog::class.java)
     }
 
-    suspend fun updateDogProfile(dogProfile: DogProfile) {
-        createOrUpdateDogProfile(dogProfile)
+    suspend fun updateDogProfile(dog: Dog) {
+        createOrUpdateDogProfile(dog)
     }
 
-    suspend fun createOrUpdateDogProfile(dogProfile: DogProfile) {
-        dogProfilesCollection.document(dogProfile.id).set(dogProfile).await()
+    suspend fun createOrUpdateDogProfile(dog: Dog) {
+        dogProfilesCollection.document(dog.id).set(dog).await()
     }
 
     suspend fun deleteDogProfile(dogId: String) {
@@ -56,12 +63,12 @@ class DogProfileRepository @Inject constructor(
         dogProfilesCollection.document(dogId).update(updates).await()
     }
 
-
-    suspend fun getDogProfilesByOwner(ownerId: String): List<DogProfile> {
+    suspend fun getDogProfilesByOwner(ownerId: String): List<Dog> {
         val snapshot = dogProfilesCollection.whereEqualTo("ownerId", ownerId).get().await()
-        return snapshot.toObjects(DogProfile::class.java)
+        return snapshot.toObjects(Dog::class.java)
     }
-    suspend fun getSwipingProfiles(): List<DogProfile> {
+
+    suspend fun getSwipingProfiles(): List<Dog> {
         val currentUserId = userRepository.getCurrentUserId() ?: return emptyList()
 
         val snapshot = firestore.collection("dogProfiles")
@@ -69,7 +76,7 @@ class DogProfileRepository @Inject constructor(
             .get()
             .await()
 
-        return snapshot.toObjects(DogProfile::class.java)
+        return snapshot.toObjects(Dog::class.java)
             .filter { !hasBeenSwiped(currentUserId, it.id) } // Filter out already swiped profiles
     }
 
@@ -91,13 +98,12 @@ class DogProfileRepository @Inject constructor(
         return likeSnapshot.exists() || dislikeSnapshot.exists()
     }
 
-    suspend fun searchDogProfiles(query: String): List<DogProfile> {
+    suspend fun searchDogProfiles(query: String): List<Dog> {
         val snapshot = dogProfilesCollection
             .whereGreaterThanOrEqualTo("name", query)
             .whereLessThanOrEqualTo("name", query + "\uf8ff")
             .get()
             .await()
-        return snapshot.toObjects(DogProfile::class.java)
+        return snapshot.toObjects(Dog::class.java)
     }
-
 }

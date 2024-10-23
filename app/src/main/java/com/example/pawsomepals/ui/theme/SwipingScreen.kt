@@ -47,8 +47,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil.compose.rememberAsyncImagePainter
-import com.example.pawsomepals.data.model.DogProfile
 import com.example.pawsomepals.viewmodel.SwipingViewModel
+import com.example.pawsomepals.data.model.Dog
 
 @Composable
 fun SwipingScreen(
@@ -77,10 +77,9 @@ fun SwipingScreen(
     }
 }
 
-
 @Composable
 fun SwipeCard(
-    profile: DogProfile,
+    profile: Dog,
     onSwipeLeft: () -> Unit,
     onSwipeRight: () -> Unit
 ) {
@@ -151,7 +150,7 @@ fun SwipeCard(
 }
 
 @Composable
-fun MatchesRow(matches: List<DogProfile>) {
+fun MatchesRow(matches: List<Dog>) {
     if (matches.isNotEmpty()) {
         Text(
             "Your Matches",
@@ -168,7 +167,7 @@ fun MatchesRow(matches: List<DogProfile>) {
 }
 
 @Composable
-fun MatchItem(match: DogProfile) {
+fun MatchItem(match: Dog) {
     Column(
         modifier = Modifier
             .padding(end = 16.dp)

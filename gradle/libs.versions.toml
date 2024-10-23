@@ -1,6 +1,10 @@
 [versions]
 agp = "8.5.2"
+coilComposeVersion = "2.2.2"
+exifinterfaceVersion = "1.3.6"
+firebaseFirestoreKtxVersion = "24.7.0"
 hamcrestCore = "2.2"
+hiltAndroidGradlePlugin = "2.44"
 kotlin = "1.9.21"
 coreKtx = "1.13.1"
 appcompat = "1.7.0"
@@ -9,6 +13,7 @@ junit = "4.13.2"
 junitVersion = "1.2.1"
 espressoCore = "3.6.1"
 kotlinxCoroutinesAndroid = "1.6.4"
+lifecycleRuntimeCompose = "2.6.0-beta01"
 lifecycleRuntimeKtx = "2.8.6"
 activityCompose = "1.9.2"
 composeBom = "2023.10.01"  # or another valid version
@@ -59,8 +64,13 @@ testng = "6.9.6"
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayout", version.ref = "constraintlayout" }
+androidx-exifinterface = { module = "androidx.exifinterface:exifinterface", version.ref = "exifinterfaceVersion" }
+androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycleRuntimeCompose" }
 androidx-material-icons-extended = { module = "androidx.compose.material:material-icons-extended", version.ref = "materialIconsExtended" }
+coil-compose-v222 = { module = "io.coil-kt:coil-compose", version.ref = "coilComposeVersion" }
+firebase-firestore-ktx-v2470 = { module = "com.google.firebase:firebase-firestore-ktx", version.ref = "firebaseFirestoreKtxVersion" }
 hamcrest-core = { module = "org.hamcrest:hamcrest-core", version.ref = "hamcrestCore" }
+hilt-android-gradle-plugin = { module = "com.google.dagger:hilt-android-gradle-plugin", version.ref = "hiltAndroidGradlePlugin" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }

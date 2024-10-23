@@ -1,9 +1,14 @@
 package com.example.pawsomepals.viewmodel
 
+import android.content.Context
+import android.net.Uri
+import android.os.Build
+import android.util.Log
+import androidx.annotation.RequiresApi
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.pawsomepals.data.model.Dog
 import com.example.pawsomepals.data.model.DogFriendlyLocation
-import com.example.pawsomepals.data.model.DogProfile
 import com.example.pawsomepals.data.model.PlaydateRequest
 import com.example.pawsomepals.data.model.Timeslot
 import com.example.pawsomepals.data.repository.PlaydateRepository
@@ -37,8 +42,8 @@ class PlaydateViewModel @Inject constructor(
     private val _requestStatus = MutableStateFlow<RequestStatus>(RequestStatus.Idle)
     val requestStatus: StateFlow<RequestStatus> = _requestStatus
 
-    private val _receiverProfile = MutableStateFlow<DogProfile?>(null)
-    val receiverProfile: StateFlow<DogProfile?> = _receiverProfile
+    private val _receiverProfile = MutableStateFlow<Dog?>(null)
+    val receiverProfile: StateFlow<Dog?> = _receiverProfile
 
     private val _playdatesForMonth = MutableStateFlow<List<PlaydateRequest>>(emptyList())
     val playdatesForMonth: StateFlow<List<PlaydateRequest>> = _playdatesForMonth
@@ -49,6 +54,26 @@ class PlaydateViewModel @Inject constructor(
     init {
         loadAvailableTimeslots()
         loadPlaydateRequests()
+    }
+    fun getOutputFileUri(context: Context): Uri {
+        return try {
+            val timeStamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault()).format(java.util.Date())
+            val imageFileName = "PROFILE_${timeStamp}_"
+            val storageDir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES)
+            val tempFile = java.io.File.createTempFile(
+                imageFileName,
+                ".jpg",
+                storageDir
+            )
+            androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                tempFile
+            )
+        } catch (e: Exception) {
+            Log.e("ProfileViewModel", "Error creating image file", e)
+            throw e
+        }
     }
 
     private fun loadAvailableTimeslots() {
@@ -73,6 +98,7 @@ class PlaydateViewModel @Inject constructor(
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.O)
     fun sendPlaydateRequest(receiverId: String, selectedTimeslots: List<LocalDate>) {
         viewModelScope.launch {
             _requestStatus.value = RequestStatus.Loading
@@ -91,6 +117,7 @@ class PlaydateViewModel @Inject constructor(
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.O)
     fun loadPlaydatesForMonth(yearMonth: YearMonth) {
         viewModelScope.launch {
             val startDate = yearMonth.atDay(1)
@@ -99,6 +126,7 @@ class PlaydateViewModel @Inject constructor(
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.O)
     fun getPlaydatesForDate(date: LocalDate): List<PlaydateRequest> {
         return _playdateRequests.value.filter { request ->
             request.suggestedTimeslots.any { it == date.toEpochDay() }

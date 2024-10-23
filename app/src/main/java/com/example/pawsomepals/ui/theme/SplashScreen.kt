@@ -1,6 +1,5 @@
 package com.example.pawsomepals.ui.theme
 
-
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.CircularProgressIndicator
@@ -23,25 +22,54 @@ fun SplashScreen(
     navController: NavController
 ) {
     val authState by authViewModel.authState.collectAsState()
+    val currentUser by authViewModel.currentUser.collectAsState()
 
-    LaunchedEffect(authState) {
+    LaunchedEffect(authState, currentUser) {
+        delay(2000) // Optional: Add a small delay to show the splash screen
+
         when (authState) {
-            is AuthViewModel.AuthState.Authenticated -> {
-                navController.navigate(Screen.MainScreen.route) {
-                    popUpTo(Screen.Splash.route) { inclusive = true }
+            AuthViewModel.AuthState.Authenticated -> {
+                when {
+                    currentUser == null -> navigateToLogin(navController)
+                    !currentUser!!.hasAcceptedTerms -> navigateToTermsOfService(navController)
+                    !currentUser!!.hasCompletedQuestionnaire -> navigateToQuestionnaire(navController)
+                    else -> navigateToMainScreen(navController)
                 }
             }
-            is AuthViewModel.AuthState.Unauthenticated -> {
-                navController.navigate(Screen.Login.route) {
-                    popUpTo(Screen.Splash.route) { inclusive = true }
-                }
-            }
-            AuthViewModel.AuthState.Initial -> {
-                // Wait for auth state to be determined
-            }
+            AuthViewModel.AuthState.Unauthenticated -> navigateToLogin(navController)
+            AuthViewModel.AuthState.Initial -> {} // Wait for auth state to be determined
         }
     }
 
+    SplashScreenContent()
+}
+
+private fun navigateToLogin(navController: NavController) {
+    navController.navigate(Screen.Login.route) {
+        popUpTo(Screen.Splash.route) { inclusive = true }
+    }
+}
+
+private fun navigateToTermsOfService(navController: NavController) {
+    navController.navigate(Screen.TermsOfService.route) {
+        popUpTo(Screen.Splash.route) { inclusive = true }
+    }
+}
+
+private fun navigateToQuestionnaire(navController: NavController) {
+    navController.navigate(Screen.Questionnaire.route) {
+        popUpTo(Screen.Splash.route) { inclusive = true }
+    }
+}
+
+private fun navigateToMainScreen(navController: NavController) {
+    navController.navigate(Screen.MainScreen.route) {
+        popUpTo(Screen.Splash.route) { inclusive = true }
+    }
+}
+
+@Composable
+private fun SplashScreenContent() {
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.Center,

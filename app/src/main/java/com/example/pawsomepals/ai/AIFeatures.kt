@@ -11,6 +11,7 @@ import com.example.pawsomepals.data.repository.UserRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.aallam.openai.api.BetaOpenAI
+import com.example.pawsomepals.data.model.Dog
 import java.time.LocalDate
 
 @OptIn(BetaOpenAI::class)
@@ -24,7 +25,7 @@ class AIFeatures(
         private const val GPT_4_MODEL = "gpt-4"
     }
 
-    suspend fun getHealthAdvice(userId: String, question: String, dogProfile: DogProfile): String? {
+    suspend fun getHealthAdvice(userId: String, question: String, dogProfile: Dog): String? {
         return withContext(Dispatchers.IO) {
             val user = userRepository.getUserById(userId) ?: return@withContext null
 
@@ -74,7 +75,7 @@ class AIFeatures(
         }
     }
 
-    suspend fun getDailyTrainingTip(dogProfile: DogProfile): String {
+    suspend fun getDailyTrainingTip(dogProfile: Dog): String {
         return withContext(Dispatchers.IO) {
             val systemPrompt = """
                 You are an experienced dog trainer providing daily tips for dog owners. 
@@ -105,7 +106,7 @@ class AIFeatures(
         }
     }
 
-    suspend fun getTrainerAdvice(userId: String, question: String, dogProfile: DogProfile): String? {
+    suspend fun getTrainerAdvice(userId: String, question: String, dogProfile: Dog): String? {
         return withContext(Dispatchers.IO) {
             val user = userRepository.getUserById(userId) ?: return@withContext null
 

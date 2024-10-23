@@ -25,6 +25,9 @@ interface QuestionDao {
     @Query("SELECT * FROM questionnaire_responses WHERE userId = :userId")
     suspend fun getQuestionnaireResponse(userId: String): QuestionnaireResponse?
 
+    @Query("SELECT * FROM questionnaire_responses WHERE userId = :userId AND dogId = :dogId")
+    suspend fun getQuestionnaireResponse(userId: String, dogId: String): QuestionnaireResponse
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertQuestionnaireResponse(response: QuestionnaireResponse)
 }

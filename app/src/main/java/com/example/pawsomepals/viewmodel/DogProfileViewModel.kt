@@ -1,55 +1,58 @@
 package com.example.pawsomepals.viewmodel
 
+import android.content.Context
+import android.net.Uri
+import android.os.Environment
+import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.pawsomepals.data.model.DogProfile
+import com.example.pawsomepals.data.DataManager
+import com.example.pawsomepals.data.model.Dog
 import com.example.pawsomepals.data.repository.DogProfileRepository
 import com.example.pawsomepals.data.repository.PhotoRepository
 import com.example.pawsomepals.data.repository.UserRepository
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.storage.FirebaseStorage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import javax.inject.Inject
-import android.net.Uri
+import kotlinx.coroutines.tasks.await
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import android.content.Context
-import android.os.Environment
-import androidx.core.content.FileProvider
-import java.io.File
-import com.google.firebase.auth.FirebaseAuth
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
+import java.util.UUID
+import javax.inject.Inject
 
 @HiltViewModel
 class DogProfileViewModel @Inject constructor(
     private val dogProfileRepository: DogProfileRepository,
     private val userRepository: UserRepository,
     private val photoRepository: PhotoRepository,
-    private val firebaseAuth: FirebaseAuth
+    private val firebaseAuth: FirebaseAuth,
+    private val storage: FirebaseStorage,
+    private val dataManager: DataManager
 ) : ViewModel() {
 
-    private val _dogProfile = MutableStateFlow<DogProfile?>(null)
-    val dogProfile: StateFlow<DogProfile?> = _dogProfile.asStateFlow()
+    private val _dogProfile = MutableStateFlow<Dog?>(null)
+    val dogProfile: StateFlow<Dog?> = _dogProfile.asStateFlow()
 
-    private val _userProfile = MutableStateFlow<com.google.firebase.firestore.auth.User?>(null)
-    val userProfile: StateFlow<com.google.firebase.firestore.auth.User?> = _userProfile.asStateFlow()
+    private val _userProfile = MutableStateFlow<FirebaseUser?>(null)
+    val userProfile: StateFlow<FirebaseUser?> = _userProfile.asStateFlow()
 
     private val _dogProfileState = MutableStateFlow<DogProfileState>(DogProfileState.Initial)
     val dogProfileState: StateFlow<DogProfileState> = _dogProfileState
 
-    private val _currentDogProfile = MutableStateFlow<DogProfile?>(null)
-    val currentDogProfile: StateFlow<DogProfile?> = _currentDogProfile
 
-    fun createDogProfile(dogProfile: DogProfile) {
+    fun createDogProfile(dog: Dog) {
         viewModelScope.launch {
             _dogProfileState.value = DogProfileState.Loading
             try {
-                val createdProfile = dogProfileRepository.createDogProfile(dogProfile)
-                _currentDogProfile.value = createdProfile
+                val createdProfile = dogProfileRepository.createDogProfile(dog)
+                _dogProfile.value = createdProfile
                 _dogProfileState.value = DogProfileState.Success("Dog profile created successfully")
             } catch (e: Exception) {
                 _dogProfileState.value = DogProfileState.Error("Failed to create dog profile: ${e.message}")
@@ -57,17 +60,28 @@ class DogProfileViewModel @Inject constructor(
         }
     }
 
-    fun updateDogProfilePicture(uri: Uri) {
+
+    fun updateDogProfilePicture(index: Int, uri: Uri) {
         viewModelScope.launch {
             try {
-                val photoUrl = photoRepository.uploadPhoto(uri, isUserPhoto = false)
-                _dogProfile.value?.let { currentProfile ->
-                    val updatedProfile = currentProfile.copy(profilePictureUrl = photoUrl)
-                    dogProfileRepository.updateDogProfile(updatedProfile)
-                    _dogProfile.value = updatedProfile
+                val imageRef = storage.reference.child("dog_images/${UUID.randomUUID()}")
+                val uploadTask = imageRef.putFile(uri).await()
+                val downloadUrl = uploadTask.storage.downloadUrl.await().toString()
+
+                _dogProfile.value?.let { currentDog ->
+                    val updatedPhotoUrls = currentDog.photoUrls.toMutableList()
+                    if (index < updatedPhotoUrls.size) {
+                        updatedPhotoUrls[index] = downloadUrl
+                    } else {
+                        updatedPhotoUrls.add(downloadUrl)
+                    }
+                    val updatedDog = currentDog.copy(photoUrls = updatedPhotoUrls)
+                    dogProfileRepository.updateDogProfile(updatedDog)
+                    _dogProfile.value = updatedDog
                 }
+                _dogProfileState.value = DogProfileState.Success("Dog profile picture updated successfully")
             } catch (e: Exception) {
-                _dogProfileState.value = DogProfileState.Error("Failed to update profile picture: ${e.message}")
+                _dogProfileState.value = DogProfileState.Error("Error updating dog profile picture: ${e.message}")
             }
         }
     }
@@ -77,7 +91,7 @@ class DogProfileViewModel @Inject constructor(
             _dogProfileState.value = DogProfileState.Loading
             try {
                 dogProfileRepository.getDogProfile(dogId).collect { profile ->
-                    _currentDogProfile.value = profile
+                    _dogProfile.value = profile
                     _dogProfileState.value = DogProfileState.Success("Dog profile fetched successfully")
                 }
             } catch (e: Exception) {
@@ -96,7 +110,7 @@ class DogProfileViewModel @Inject constructor(
                 "Size" -> currentProfile.copy(size = value)
                 "Energy Level" -> currentProfile.copy(energyLevel = value)
                 "Friendliness" -> currentProfile.copy(friendliness = value)
-                "Spayed/Neutered" -> currentProfile.copy(isSpayedNeutered = value.toBoolean())
+                "Spayed/Neutered" -> currentProfile.copy(isSpayedNeutered = value)
                 "Friendly with dogs" -> currentProfile.copy(friendlyWithDogs = value)
                 "Friendly with children" -> currentProfile.copy(friendlyWithChildren = value)
                 "Special needs" -> currentProfile.copy(specialNeeds = value)
@@ -111,31 +125,30 @@ class DogProfileViewModel @Inject constructor(
                 try {
                     dogProfileRepository.updateDogProfile(updatedProfile)
                     _dogProfile.value = updatedProfile
+                    _dogProfileState.value = DogProfileState.Success("Dog profile updated successfully")
                 } catch (e: Exception) {
                     _dogProfileState.value = DogProfileState.Error("Failed to update dog profile: ${e.message}")
                 }
             }
         }
     }
+
     fun deleteDogProfile(dogId: String) {
         viewModelScope.launch {
-            _dogProfileState.value = DogProfileState.Loading
             try {
-                dogProfileRepository.deleteDogProfile(dogId)
-                _currentDogProfile.value = null
-                _dogProfileState.value = DogProfileState.Success("Dog profile deleted successfully")
+                dataManager.deleteDogProfile(dogId)
+                // Additional logic after deleting profile
             } catch (e: Exception) {
-                _dogProfileState.value = DogProfileState.Error("Failed to delete dog profile: ${e.message}")
+                // Handle error
             }
         }
     }
-
     fun updateDogLocation(dogId: String, latitude: Double, longitude: Double) {
         viewModelScope.launch {
             _dogProfileState.value = DogProfileState.Loading
             try {
                 dogProfileRepository.updateDogLocation(dogId, latitude, longitude)
-                _currentDogProfile.value = _currentDogProfile.value?.copy(latitude = latitude, longitude = longitude)
+                _dogProfile.value = _dogProfile.value?.copy(latitude = latitude, longitude = longitude)
                 _dogProfileState.value = DogProfileState.Success("Dog location updated successfully")
             } catch (e: Exception) {
                 _dogProfileState.value = DogProfileState.Error("Failed to update dog location: ${e.message}")
@@ -176,9 +189,8 @@ class DogProfileViewModel @Inject constructor(
                 dogProfileRepository.getDogProfile(userId).collect { dogProfile ->
                     _dogProfile.value = dogProfile
                 }
-                userRepository.getUserProfile(userId).collect { userProfile ->
-                    _userProfile.value = userProfile as? com.google.firebase.firestore.auth.User
-                }
+                _userProfile.value = firebaseAuth.currentUser
+                _dogProfileState.value = DogProfileState.Success("Profiles loaded successfully")
             } catch (e: Exception) {
                 _dogProfileState.value = DogProfileState.Error("Failed to load profiles: ${e.message}")
             }

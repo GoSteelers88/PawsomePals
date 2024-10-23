@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.example.pawsomepals">
 
+    <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -10,8 +11,14 @@
         android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
-    <!-- android:dataExtractionRules="@xml/data_extraction_rules" -->
-    <!-- android:fullBackupContent="@xml/backup_rules" -->
+
+    <uses-feature android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front"
+        android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus"
+        android:required="false" />
+
     <application
         android:name="PawsomePalsApplication"
         android:allowBackup="true"
@@ -25,16 +32,12 @@
         android:requestLegacyExternalStorage="true"
         tools:targetApi="31">
 
-
         <meta-data
             android:name="com.google.android.safetynet.ANDROID_RECAPTCHA_SITE_KEY"
             android:value="6LcM4FUqAAAAAPw2npJ8wOOsaSlqw8B_ju6CT67i"/>
-        <!-- AdMob Configuration -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
             android:value="ca-app-pub-5568971061402317~2913900613"/>
-
-        <!-- Facebook SDK Configurations -->
         <meta-data
             android:name="com.facebook.sdk.ApplicationId"
             android:value="@string/facebook_app_id"/>
@@ -78,6 +81,16 @@
                 android:name="androidx.work.WorkManagerInitializer"
                 android:value="androidx.startup"
                 tools:node="remove" />
+        </provider>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
         </provider>
 
         <service

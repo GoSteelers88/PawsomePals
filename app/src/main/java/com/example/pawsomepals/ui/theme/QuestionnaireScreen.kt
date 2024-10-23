@@ -1,259 +1,570 @@
 package com.example.pawsomepals.ui.theme
 
+
+import android.util.Log
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.pawsomepals.ui.components.Question
+import com.example.pawsomepals.ui.components.QuestionProgress
+import com.example.pawsomepals.ui.components.QuestionType
+import com.example.pawsomepals.ui.components.QuestionnaireData
 import com.example.pawsomepals.viewmodel.QuestionnaireViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun QuestionnaireScreen(
     viewModel: QuestionnaireViewModel,
     userId: String,
-    onComplete: () -> Unit
+    dogId: String?,
+    onComplete: (Any?) -> Unit,
+    onExit: () -> Unit
 ) {
+    // State Management
+    val scope = rememberCoroutineScope()
     var currentQuestionIndex by remember { mutableIntStateOf(0) }
-    val answers = remember { mutableStateMapOf<String, String>() }
-    var customAnswer by remember { mutableStateOf("") }
+    var answers by remember { mutableStateOf(emptyMap<String, String>()) }
+    var showCelebration by remember { mutableStateOf(false) }
+    var showExitConfirmDialog by remember { mutableStateOf(false) }
+    var showErrorDialog by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf("") }
 
-    val questions = listOf(
-        Question("What's your dog's name?", QuestionType.TEXT),
-        Question("What breed is your dog?", QuestionType.SINGLE_CHOICE, listOf(
-            "Labrador Retriever", "German Shepherd", "Golden Retriever", "French Bulldog",
-            "Bulldog", "Poodle", "Beagle", "Rottweiler", "Pointer", "Dachshund",
-            "Yorkshire Terrier", "Boxer", "Siberian Husky", "Great Dane", "Doberman Pinscher", "Other"
-        )),
-        Question("How old is your dog?", QuestionType.SINGLE_CHOICE, listOf(
-            "Less than 1 year", "1-3 years", "4-7 years", "8-10 years", "Over 10 years"
-        )),
-        Question("What's your dog's gender?", QuestionType.SINGLE_CHOICE, listOf("Male", "Female")),
-        Question("Is your dog spayed/neutered?", QuestionType.SINGLE_CHOICE, listOf("Yes", "No")),
-        Question("What's your dog's size?", QuestionType.SINGLE_CHOICE, listOf(
-            "Extra Small (0-10 lbs)", "Small (11-25 lbs)", "Medium (26-50 lbs)",
-            "Large (51-100 lbs)", "Extra Large (100+ lbs)"
-        )),
-        Question("How would you describe your dog's energy level?", QuestionType.SINGLE_CHOICE, listOf(
-            "Very Low", "Low", "Moderate", "High", "Very High"
-        )),
-        Question("Is your dog friendly with other dogs?", QuestionType.SINGLE_CHOICE, listOf(
-            "Very Friendly", "Friendly", "Neutral", "Somewhat Unfriendly", "Not Friendly"
-        )),
-        Question("Is your dog friendly with children?", QuestionType.SINGLE_CHOICE, listOf(
-            "Very Friendly", "Friendly", "Neutral", "Somewhat Unfriendly", "Not Friendly", "Unknown"
-        )),
-        Question("Does your dog have any special needs or medical conditions?", QuestionType.MULTI_CHOICE, listOf(
-            "None", "Allergies", "Arthritis", "Blindness", "Deafness", "Diabetes",
-            "Heart Condition", "Hip Dysplasia", "Skin Condition", "Other"
-        )),
-        Question("What's your dog's favorite toy?", QuestionType.SINGLE_CHOICE, listOf(
-            "Ball", "Frisbee", "Plush Toy", "Rope Toy", "Chew Toy", "Puzzle Toy", "None", "Other"
-        )),
-        Question("Does your dog prefer indoor or outdoor activities?", QuestionType.SINGLE_CHOICE, listOf(
-            "Mostly Indoor", "Balanced Indoor/Outdoor", "Mostly Outdoor"
-        )),
-        Question("How often do you take your dog for walks?", QuestionType.SINGLE_CHOICE, listOf(
-            "Multiple times a day", "Once a day", "A few times a week", "Once a week", "Rarely"
-        )),
-        Question("What's your dog's favorite treat?", QuestionType.SINGLE_CHOICE, listOf(
-            "Commercial dog treats", "Cheese", "Meat", "Fruits/Vegetables", "Homemade treats", "Other"
-        )),
-        Question("Does your dog have any training certifications?", QuestionType.MULTI_CHOICE, listOf(
-            "None", "Basic Obedience", "Advanced Obedience", "Agility", "Therapy Dog",
-            "Search and Rescue", "Canine Good Citizen", "Other"
-        ))
+    // Collect ViewModel States
+    val isSubmitting by viewModel.isSubmitting.collectAsState()
+    val error by viewModel.error.collectAsState()
+    val questionnaireResponses by viewModel.questionnaireResponses.collectAsState()
+    val completionStatus by viewModel.completionStatus.collectAsState()
+
+    // Load Questions
+    val questionnaireCategories = remember { QuestionnaireData.getQuestionnaireCategories() }
+    val allQuestions = remember { questionnaireCategories.flatMap { it.questions } }
+    val currentQuestion = remember(currentQuestionIndex) { allQuestions[currentQuestionIndex] }
+
+    // Progress Calculation
+    val currentProgress = remember(currentQuestionIndex) {
+        val categoryIndex = questionnaireCategories.indexOfFirst { category ->
+            category.questions.contains(currentQuestion)
+        }
+        QuestionProgress(
+            categoryIndex = categoryIndex,
+            questionIndex = currentQuestionIndex,
+            totalQuestions = allQuestions.size,
+            categoryName = questionnaireCategories[categoryIndex].name
+        )
+    }
+
+    val progress by animateFloatAsState(
+        targetValue = (currentQuestionIndex + 1).toFloat() / allQuestions.size,
+        animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing)
     )
 
-    Column(
+    // Effects
+    LaunchedEffect(dogId) {
+        if (dogId != null) {
+            viewModel.loadQuestionnaireResponses(userId, dogId)
+        }
+    }
+
+    LaunchedEffect(questionnaireResponses) {
+        if (questionnaireResponses.isNotEmpty()) {
+            answers = questionnaireResponses
+        }
+    }
+
+    LaunchedEffect(error) {
+        if (error != null) {
+            errorMessage = error ?: "An unknown error occurred"
+            showErrorDialog = true
+            viewModel.clearError()
+        }
+    }
+
+    LaunchedEffect(completionStatus) {
+        if (completionStatus) {
+            showCelebration = true
+        }
+    }
+
+    // Back Handler
+    BackHandler {
+        if (currentQuestionIndex > 0) {
+            currentQuestionIndex--
+        } else {
+            showExitConfirmDialog = true
+        }
+    }
+
+    // Helper Functions
+    fun validateAnswer(answer: String?): Boolean = QuestionnaireData.validateAnswer(currentQuestion, answer)
+
+    fun moveToNextQuestion() {
+        val currentAnswer = answers[currentQuestion.id]
+        Log.d("QuestionnaireScreen", "Moving to next question. Current: $currentQuestionIndex, Total: ${allQuestions.size}")
+
+        if (validateAnswer(currentAnswer)) {
+            if (currentQuestionIndex < allQuestions.size - 1) {
+                currentQuestionIndex++
+                Log.d("QuestionnaireScreen", "Advanced to question: $currentQuestionIndex")
+            } else {
+                Log.d("QuestionnaireScreen", "Final question reached. Saving responses...")
+                scope.launch {
+                    try {
+                        onComplete(answers)
+                        showCelebration = true
+                        Log.d("QuestionnaireScreen", "Celebration triggered")
+                    } catch (e: Exception) {
+                        Log.e("QuestionnaireScreen", "Error in completion flow", e)
+                        viewModel.setErrorMessage("Failed to complete: ${e.message}")
+                    }
+                }
+            }
+        } else {
+            viewModel.setErrorMessage("Please provide a valid answer before continuing")
+        }
+    }
+
+    // UI Structure
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Pet Profile") },
+                navigationIcon = {
+                    IconButton(onClick = { showExitConfirmDialog = true }) {
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "Exit")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            )
+        }
+    ) { paddingValues ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            if (isSubmitting) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            }
+
+            QuestionnaireContent(
+                currentProgress = currentProgress,
+                progress = progress,
+                currentQuestion = currentQuestion,
+                answers = answers,
+                onAnswerSelected = { answer ->
+                    answers = answers.toMutableMap().apply {
+                        put(currentQuestion.id, answer)
+                    }
+                    if (currentQuestion.type == QuestionType.SINGLE_CHOICE) {
+                        moveToNextQuestion()
+                    }
+                },
+                currentQuestionIndex = currentQuestionIndex,
+                canGoBack = currentQuestionIndex > 0,
+                canGoForward = when (currentQuestion.type) {
+                    QuestionType.TEXT -> answers[currentQuestion.id]?.isNotEmpty() == true
+                    QuestionType.SINGLE_CHOICE -> answers.containsKey(currentQuestion.id)
+                    QuestionType.MULTI_CHOICE -> answers[currentQuestion.id]?.isNotEmpty() == true
+                },
+                onPrevious = { currentQuestionIndex-- },
+                onNext = { moveToNextQuestion() }
+            )
+        }
+    }
+
+    // Overlays and Dialogs
+    if (showCelebration) {
+        CelebrationOverlay {
+            showCelebration = false
+            scope.launch {
+                delay(500)
+                onComplete(answers)
+            }
+        }
+    }
+
+    if (showErrorDialog) {
+        QuestionnaireErrorDialog(
+            message = errorMessage,
+            onDismiss = { showErrorDialog = false }
+        )
+    }
+
+    if (showExitConfirmDialog) {
+        ExitConfirmationDialog(
+            onConfirm = {
+                scope.launch {
+                    viewModel.saveQuestionnaireResponses(userId, dogId, answers)
+                    showExitConfirmDialog = false
+                    onExit()
+                }
+            },
+            onDismiss = { showExitConfirmDialog = false }
+        )
+    }
+}
+
+@Composable
+fun CelebrationOverlay(onDismiss: () -> Unit) {
+    var celebrationStep by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(Unit) {
+        delay(1000)
+        celebrationStep = 1
+        delay(1000)
+        celebrationStep = 2
+        delay(1000)
+        onDismiss()
+    }
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.7f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = when (celebrationStep) {
+                    0 -> "Woohoo!"
+                    1 -> "You did it!"
+                    else -> "Welcome to the pack!"
+                },
+                color = Color.White,
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Icon(
+                imageVector = when (celebrationStep) {
+                    0 -> Icons.Filled.Celebration
+                    1 -> Icons.Filled.Pets
+                    else -> Icons.Filled.Favorite
+                },
+                contentDescription = "Celebration icon",
+                tint = Color.White,
+                modifier = Modifier.size(64.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun QuestionnaireContent(
+    currentProgress: QuestionProgress,
+    progress: Float,
+    currentQuestion: Question,
+    answers: Map<String, String>,
+    onAnswerSelected: (String) -> Unit,
+    currentQuestionIndex: Int,
+    canGoBack: Boolean,
+    canGoForward: Boolean,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
             .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .heightIn(min = 500.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        if (currentQuestionIndex < questions.size) {
-            Text(
-                "Question ${currentQuestionIndex + 1} of ${questions.size}",
-                style = MaterialTheme.typography.headlineSmall
-            )
+        QuestionnaireHeader(currentProgress)
+        Spacer(modifier = Modifier.height(16.dp))
+        PetProgressIndicator(progress)
+        Spacer(modifier = Modifier.height(24.dp))
 
-            Text(
-                questions[currentQuestionIndex].text,
-                style = MaterialTheme.typography.bodyLarge
+        @OptIn(ExperimentalAnimationApi::class)
+        AnimatedContent(
+            targetState = currentQuestionIndex,
+            transitionSpec = {
+                ContentTransform(
+                    targetContentEnter = slideInHorizontally { width -> width } + fadeIn(),
+                    initialContentExit = slideOutHorizontally { width -> -width } + fadeOut()
+                )
+            },
+            label = "Question Animation"
+        ) { targetIndex ->
+            QuestionCard(
+                question = currentQuestion,
+                answer = answers[currentQuestion.id] ?: "",
+                onAnswerSelected = onAnswerSelected
             )
+        }
 
-            when (questions[currentQuestionIndex].type) {
-            QuestionType.TEXT -> {
-                TextField(
-                    value = customAnswer,
-                    onValueChange = {
-                        customAnswer = it
-                        answers[questions[currentQuestionIndex].text] = it
-                    },
-                    modifier = Modifier.fillMaxWidth()
+        Spacer(modifier = Modifier.height(24.dp))
+        NavigationButtons(
+            canGoBack = canGoBack,
+            canGoForward = canGoForward,
+            onPrevious = onPrevious,
+            onNext = onNext
+        )
+    }
+}
+
+@Composable
+private fun QuestionCard(
+    question: Question,
+    answer: String,
+    onAnswerSelected: (String) -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize(),
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = question.text,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
+            when (question.type) {
+                QuestionType.TEXT -> TextAnswerField(answer, onAnswerSelected)
+                QuestionType.SINGLE_CHOICE -> SingleChoiceAnswers(question, answer, onAnswerSelected)
+                QuestionType.MULTI_CHOICE -> MultiChoiceAnswers(
+                    question = question,
+                    selectedAnswers = if (answer.isBlank()) emptyList() else answer.split(","),
+                    onAnswerSelected = onAnswerSelected
                 )
             }
-            QuestionType.SINGLE_CHOICE -> {
-                questions[currentQuestionIndex].options?.forEach { option ->
-                    Button(
-                        onClick = {
-                            answers[questions[currentQuestionIndex].text] = option
-                            if (option != "Other") {
-                                moveToNextQuestion(currentQuestionIndex, questions.size, answers, "") { newIndex, newAnswers ->
-                                    currentQuestionIndex = newIndex
-                                    answers.clear()
-                                    answers.putAll(newAnswers)
-                                    customAnswer = ""
-                                }
-                            } else {
-                                customAnswer = ""
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(option)
-                    }
-                }
-                if (questions[currentQuestionIndex].options?.contains("Other") == true) {
-                    TextField(
-                        value = customAnswer,
-                        onValueChange = {
-                            customAnswer = it
-                            answers[questions[currentQuestionIndex].text] = "Other: $it"
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Other (please specify)") }
-                    )
-                }
-            }
-            QuestionType.MULTI_CHOICE -> {
-                val selectedOptions = remember { mutableStateListOf<String>() }
-                questions[currentQuestionIndex].options?.forEach { option ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Checkbox(
-                            checked = selectedOptions.contains(option),
-                            onCheckedChange = { isChecked ->
-                                if (isChecked) {
-                                    selectedOptions.add(option)
-                                } else {
-                                    selectedOptions.remove(option)
-                                }
-                                answers[questions[currentQuestionIndex].text] = selectedOptions.joinToString(", ")
-                            }
-                        )
-                        Text(option)
-                    }
-                }
-                if (questions[currentQuestionIndex].options?.contains("Other") == true) {
-                    TextField(
-                        value = customAnswer,
-                        onValueChange = {
-                            customAnswer = it
-                            if (it.isNotEmpty()) {
-                                selectedOptions.removeAll { it.startsWith("Other:") }
-                                selectedOptions.add("Other: $it")
-                            } else {
-                                selectedOptions.removeAll { it.startsWith("Other:") }
-                            }
-                            answers[questions[currentQuestionIndex].text] = selectedOptions.joinToString(", ")
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Other (please specify)") }
-                    )
-                }
-            }
-        }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                if (currentQuestionIndex > 0) {
-                    Button(onClick = {
-                        currentQuestionIndex--
-                        customAnswer = answers[questions[currentQuestionIndex].text] ?: ""
-                    }) {
-                        Text("Previous")
-                    }
-                }
-                Button(
-                    onClick = {
-                        val currentQuestion = questions[currentQuestionIndex]
-                        when (currentQuestion.type) {
-                            QuestionType.TEXT -> {
-                                if (customAnswer.isNotEmpty()) {
-                                    answers[currentQuestion.text] = customAnswer
-                                }
-                            }
-                            QuestionType.SINGLE_CHOICE -> {
-                                if (!answers.containsKey(currentQuestion.text) && customAnswer.isEmpty()) {
-                                    // Show an error or prevent moving to the next question
-                                    return@Button
-                                }
-                            }
-                            QuestionType.MULTI_CHOICE -> {
-                                if (!answers.containsKey(currentQuestion.text) && customAnswer.isEmpty()) {
-                                    // Show an error or prevent moving to the next question
-                                    return@Button
-                                }
-                            }
-                        }
-
-                        if (currentQuestionIndex < questions.size - 1) {
-                            currentQuestionIndex++
-                            customAnswer = ""
-                        } else {
-                            viewModel.saveQuestionnaireResponses(userId, answers)
-                            onComplete()
-                        }
-                    }
-                ) {
-                    Text(if (currentQuestionIndex < questions.size - 1) "Next" else "Complete")
-                }
-            }
-
-            LinearProgressIndicator(
-                progress = (currentQuestionIndex + 1).toFloat() / questions.size,
-                modifier = Modifier.fillMaxWidth()
-            )
-        } else {
-            Text("Questionnaire completed!", style = MaterialTheme.typography.headlineMedium)
-            Button(onClick = onComplete) {
-                Text("Finish")
-            }
         }
     }
 }
 
-enum class QuestionType {
-    TEXT, SINGLE_CHOICE, MULTI_CHOICE
-}
-
-data class Question(
-    val text: String,
-    val type: QuestionType,
-    val options: List<String>? = null
-)
-
-private fun moveToNextQuestion(
-    currentIndex: Int,
-    totalQuestions: Int,
-    answers: MutableMap<String, String>,
-    customAnswer: String,
-    updateUI: (Int, Map<String, String>) -> Unit
+@Composable
+private fun NavigationButtons(
+    canGoBack: Boolean,
+    canGoForward: Boolean,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
 ) {
-    val newAnswers = answers.toMutableMap()
-    if (customAnswer.isNotEmpty() && answers.isNotEmpty()) {
-        newAnswers[answers.keys.last()] = customAnswer
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        AnimatedVisibility(
+            visible = canGoBack,
+            enter = fadeIn() + expandHorizontally(),
+            exit = fadeOut() + shrinkHorizontally()
+        ) {
+            Button(
+                onClick = onPrevious,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer
+                )
+            ) {
+                Icon(Icons.Filled.ArrowBack, contentDescription = "Previous")
+                Spacer(Modifier.width(8.dp))
+                Text("Previous")
+            }
+        }
+
+        Button(
+            onClick = onNext,
+            enabled = canGoForward,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer
+            )
+        ) {
+            Text("Next")
+            Spacer(Modifier.width(8.dp))
+            Icon(Icons.Filled.ArrowForward, contentDescription = "Next")
+        }
     }
-    val newIndex = if (currentIndex < totalQuestions - 1) currentIndex + 1 else totalQuestions
-    updateUI(newIndex, newAnswers)
+}
+
+@Composable
+private fun TextAnswerField(answer: String, onAnswerSelected: (String) -> Unit) {
+    OutlinedTextField(
+        value = answer,
+        onValueChange = onAnswerSelected,
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text("Your answer") }
+    )
+}
+
+@Composable
+private fun SingleChoiceAnswers(
+    question: Question,
+    selectedAnswer: String,
+    onAnswerSelected: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .heightIn(max = 300.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        question.options?.forEach { option ->
+            ChoiceButton(
+                text = option,
+                selected = option == selectedAnswer,
+                onClick = { onAnswerSelected(option) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun MultiChoiceAnswers(
+    question: Question,
+    selectedAnswers: List<String>,
+    onAnswerSelected: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .heightIn(max = 300.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        question.options?.forEach { option ->
+            ChoiceButton(
+                text = option,
+                selected = selectedAnswers.contains(option),
+                onClick = {
+                    val newAnswers = when {
+                        option == "None" -> listOf("None")
+                        selectedAnswers.contains("None") -> listOf(option)
+                        selectedAnswers.contains(option) -> selectedAnswers.filter { it != option }
+                        else -> selectedAnswers + listOf(option)
+                    }
+                    onAnswerSelected(newAnswers.joinToString(","))
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChoiceButton(text: String, selected: Boolean, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surface,
+            contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+            else MaterialTheme.colorScheme.onSurface
+        )
+    ) {
+        Text(text)
+    }
+}
+
+@Composable
+private fun QuestionnaireHeader(progress: QuestionProgress) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = progress.categoryName,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+        LinearProgressIndicator(
+            progress = progress.questionIndex.toFloat() / progress.totalQuestions,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp)
+        )
+    }
+}
+
+@Composable
+private fun PetProgressIndicator(progress: Float) {
+    Box(
+        modifier = Modifier
+            .size(200.dp)
+            .clip(CircleShape)
+            .border(8.dp, MaterialTheme.colorScheme.primary, CircleShape)
+    ) {
+        CircularProgressIndicator(
+            progress = progress,
+            modifier = Modifier.fillMaxSize(),
+            strokeWidth = 8.dp,
+            color = MaterialTheme.colorScheme.secondary
+        )
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = "${(progress * 100).toInt()}%",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Complete",
+                style = MaterialTheme.typography.bodyLarge
+            )
+        }
+    }
+}
+
+@Composable
+private fun QuestionnaireErrorDialog(message: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Error") },
+        text = { Text(message) },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("OK")
+            }
+        }
+    )
+}
+
+@Composable
+private fun ExitConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Exit Questionnaire?") },
+        text = { Text("Your progress will be saved. Are you sure you want to exit?") },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("Yes")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("No")
+            }
+        }
+    )
 }

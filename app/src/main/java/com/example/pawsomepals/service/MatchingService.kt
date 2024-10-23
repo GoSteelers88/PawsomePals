@@ -1,5 +1,6 @@
 package com.example.pawsomepals.service
 
+import com.example.pawsomepals.data.model.Dog
 import com.example.pawsomepals.data.model.DogProfile
 import kotlin.math.abs
 
@@ -8,11 +9,11 @@ class MatchingService(private val locationService: LocationService) {
     private val MATCH_THRESHOLD = 0.7
     private val MAX_DISTANCE = 50.0 // Maximum distance in km for consideration
 
-    fun isMatch(profile1: DogProfile, profile2: DogProfile): Boolean {
+    fun isMatch(profile1: Dog, profile2: Dog): Boolean {
         return getCompatibilityScore(profile1, profile2) >= MATCH_THRESHOLD
     }
 
-    fun getCompatibilityScore(profile1: DogProfile, profile2: DogProfile): Double {
+    fun getCompatibilityScore(profile1: Dog, profile2: Dog): Double{
         var score = 0.0
         var totalWeight = 0.0
 
@@ -116,7 +117,7 @@ class MatchingService(private val locationService: LocationService) {
         }
     }
 
-    private fun getLocationCompatibility(profile1: DogProfile, profile2: DogProfile): Double {
+    private fun getLocationCompatibility(profile1: Dog, profile2: Dog): Double {
         val lat1 = profile1.latitude
         val lon1 = profile1.longitude
         val lat2 = profile2.latitude

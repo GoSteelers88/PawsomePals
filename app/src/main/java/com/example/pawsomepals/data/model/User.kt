@@ -29,7 +29,10 @@ data class User(
     var lastLoginTime: Long = System.currentTimeMillis(),
     val hasSubscription: Boolean = false,
     var subscriptionEndDate: LocalDate? = null,
-    var dailyQuestionCount: Int = 0
+    var dailyQuestionCount: Int = 0,
+    var phoneNumber: String? = null,
+    var preferredContact: String? = null,
+    var notificationsEnabled: Boolean = true
 ) {
     // No-argument constructor required by Firebase
     constructor() : this("", "", "", "")

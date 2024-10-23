@@ -46,7 +46,7 @@ import com.example.pawsomepals.data.model.QuestionnaireResponse
         Rating::class,
         QuestionnaireResponse::class
     ],
-    version = 15,
+    version = 21,
     exportSchema = true
 )
 @TypeConverters(IntListConverter::class, LongListConverter::class, LocalDateConverter::class, Converters::class)

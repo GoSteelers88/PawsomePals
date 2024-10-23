@@ -15,7 +15,9 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.util.UUID
+import javax.inject.Singleton
 
+@Singleton
 class UserRepository(
     private val userDao: UserDao,
     private val dogDao: DogDao,
@@ -42,42 +44,37 @@ class UserRepository(
         }
     }
 
-    suspend fun getDogProfileByOwnerId(ownerId: String): DogProfile? {
+    suspend fun getDogProfileByOwnerId(ownerId: String): Dog? {
         return withContext(Dispatchers.IO) {
             val localDog = dogDao.getDogByOwnerId(ownerId)
-            if (localDog != null) {
-                dogToDogProfile(localDog)
-            } else {
-                val remoteDog = firestore.collection("dogs")
-                    .whereEqualTo("ownerId", ownerId)
-                    .get()
-                    .await()
-                    .documents
-                    .firstOrNull()
-                    ?.toObject(Dog::class.java)
-                remoteDog?.let {
-                    dogDao.insertDog(it)
-                    dogToDogProfile(it)
-                }
-            }
+            localDog ?: firestore.collection("dogs")
+                .whereEqualTo("ownerId", ownerId)
+                .get()
+                .await()
+                .documents
+                .firstOrNull()
+                ?.toObject(Dog::class.java)
+                ?.also { dogDao.insertDog(it) }
         }
     }
 
-    suspend fun getDogProfileById(profileId: String): DogProfile? {
+    suspend fun getDogProfileById(profileId: String): Dog? {
         return withContext(Dispatchers.IO) {
             val localDog = dogDao.getDogById(profileId)
-            if (localDog != null) {
-                dogToDogProfile(localDog)
-            } else {
-                val remoteDog = firestore.collection("dogs")
-                    .document(profileId)
-                    .get()
-                    .await()
-                    .toObject(Dog::class.java)
-                remoteDog?.let {
-                    dogDao.insertDog(it)
-                    dogToDogProfile(it)
-                }
+            localDog ?: firestore.collection("dogs")
+                .document(profileId)
+                .get()
+                .await()
+                .toObject(Dog::class.java)
+                ?.also { dogDao.insertDog(it) }
+        }
+    }
+    suspend fun updateDogPhotoUrls(dogId: String, photoUrls: List<String?>) {
+        withContext(Dispatchers.IO) {
+            val dog = dogDao.getDogById(dogId)
+            dog?.let {
+                val updatedDog = it.copy(photoUrls = photoUrls)
+                updateDog(updatedDog)
             }
         }
     }
@@ -98,10 +95,10 @@ class UserRepository(
             }
     }
 
-    suspend fun getNextDogProfile(): DogProfile? {
+    suspend fun getNextDogProfile(): Dog? {
         return withContext(Dispatchers.IO) {
             val currentUserId = currentUser?.id ?: return@withContext null
-            dogDao.getNextUnseenDogProfile(currentUserId)?.let { dogToDogProfile(it) }
+            dogDao.getNextUnseenDogProfile(currentUserId)
         }
     }
 
@@ -197,6 +194,12 @@ class UserRepository(
             }
         }
     }
+    suspend fun isUserSetupComplete(userId: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            val user = getUserById(userId)
+            user?.hasAcceptedTerms == true && user.hasCompletedQuestionnaire == true
+        }
+    }
 
     suspend fun insertDog(dog: Dog) {
         withContext(Dispatchers.IO) {
@@ -269,16 +272,14 @@ class UserRepository(
         )
     }
 
-    suspend fun updateDogProfile(dogProfile: DogProfile) {
+    suspend fun updateDogProfile(dog: Dog) {
         withContext(Dispatchers.IO) {
-            val dog = dogProfileToDog(dogProfile)
             updateDog(dog)
         }
     }
 
-    suspend fun createOrUpdateDogProfile(dogProfile: DogProfile) {
+    suspend fun createOrUpdateDogProfile(dog: Dog) {
         withContext(Dispatchers.IO) {
-            val dog = dogProfileToDog(dogProfile)
             if (dogDao.getDogById(dog.id) != null) {
                 updateDog(dog)
             } else {
@@ -328,7 +329,7 @@ class UserRepository(
         }
     }
 
-    suspend fun getCurrentUserDog(): DogProfile? {
+    suspend fun getCurrentUserDog(): Dog? {
         return withContext(Dispatchers.IO) {
             currentUser?.id?.let { userId ->
                 getDogProfileByOwnerId(userId)

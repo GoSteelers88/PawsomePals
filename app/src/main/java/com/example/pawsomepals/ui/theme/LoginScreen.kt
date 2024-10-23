@@ -4,6 +4,7 @@ import android.app.Activity
 import android.util.Log
 import android.util.Patterns
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.*
@@ -44,6 +45,7 @@ fun LoginScreen(authViewModel: AuthViewModel, navController: NavController) {
 
     val scrollState = rememberScrollState()
 
+
     val googleSignInLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -71,11 +73,8 @@ fun LoginScreen(authViewModel: AuthViewModel, navController: NavController) {
                     popUpTo(Screen.Login.route) { inclusive = true }
                 }
             }
-            is AuthViewModel.AuthState.Unauthenticated -> {
+            else -> {
                 // Do nothing, stay on login screen
-            }
-            is AuthViewModel.AuthState.Initial -> {
-                // Do nothing, waiting for auth state to be determined
             }
         }
     }
@@ -207,7 +206,7 @@ fun LoginScreen(authViewModel: AuthViewModel, navController: NavController) {
         Button(
             onClick = {
                 authViewModel.beginGoogleSignIn()
-                authViewModel.setErrorMessage(null)
+                authViewModel.clearErrorMessage()
             },
             modifier = Modifier
                 .fillMaxWidth()
@@ -223,6 +222,8 @@ fun LoginScreen(authViewModel: AuthViewModel, navController: NavController) {
             Spacer(modifier = Modifier.width(8.dp))
             Text("Sign in with Google")
         }
+
+
 
         Spacer(modifier = Modifier.height(16.dp))
 

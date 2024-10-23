@@ -1,12 +1,16 @@
 package com.example.pawsomepals.di
 
+import android.app.Application
 import android.content.Context
+import androidx.activity.ComponentActivity
+import androidx.savedstate.SavedStateRegistryOwner
 import com.aallam.openai.client.OpenAI
 import com.example.pawsomepals.BuildConfig
 import com.example.pawsomepals.R
 import com.example.pawsomepals.ai.AIFeatures
 import com.example.pawsomepals.auth.GoogleAuthManager
 import com.example.pawsomepals.data.AppDatabase
+import com.example.pawsomepals.data.DataManager
 import com.example.pawsomepals.data.dao.PhotoDao
 import com.example.pawsomepals.data.dao.SettingsDao
 import com.example.pawsomepals.data.remote.PhotoApi
@@ -25,7 +29,10 @@ import com.example.pawsomepals.service.LocationService
 import com.example.pawsomepals.service.LocationSuggestionService
 import com.example.pawsomepals.service.MatchingService
 import com.example.pawsomepals.subscription.SubscriptionManager
+import com.example.pawsomepals.utils.ImageHandler
+import com.example.pawsomepals.utils.NetworkUtils
 import com.example.pawsomepals.utils.RecaptchaManager
+import com.example.pawsomepals.viewmodel.ViewModelFactory
 import com.facebook.CallbackManager
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
@@ -35,9 +42,12 @@ import com.google.android.gms.location.LocationServices
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.storage.FirebaseStorage
+import dagger.Binds
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.components.ActivityComponent
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import retrofit2.Retrofit
@@ -47,6 +57,7 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object AppModule {
+
 
     @Provides
     @Singleton
@@ -95,6 +106,7 @@ object AppModule {
     fun provideSettingsDao(appDatabase: AppDatabase): SettingsDao {
         return appDatabase.settingsDao()
     }
+
 
 
 
@@ -211,44 +223,93 @@ object AppModule {
         return OpenAIRepository(openAI)
     }
 
+
     @Provides
     @Singleton
-    fun provideGoogleSignInClient(@ApplicationContext context: Context): GoogleSignInClient {
-        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestIdToken(context.getString(R.string.default_web_client_id))
-            .requestEmail()
-            .setAccountName(null.toString())  // This allows selecting any account
-            .build()
-        return GoogleSignIn.getClient(context, gso)
+    fun provideFirebaseStorage(): FirebaseStorage {
+        return FirebaseStorage.getInstance()
     }
 
     @Provides
     @Singleton
-    fun provideGoogleAuthManager(
+    fun provideDataManager(
+        appDatabase: AppDatabase,
+        firestore: FirebaseFirestore,
+        auth: FirebaseAuth,
+        storage: FirebaseStorage,
         @ApplicationContext context: Context,
-        firebaseAuth: FirebaseAuth
-    ): GoogleAuthManager = GoogleAuthManager(context, firebaseAuth)
+        questionRepository: QuestionRepository,
+        imageHandler: ImageHandler  // Added this parameter
+    ): DataManager {
+        return DataManager(
+            appDatabase = appDatabase,
+            firestore = firestore,
+            auth = auth,
+            storage = storage,
+            context = context,
+            questionRepository = questionRepository,
+            imageHandler = imageHandler  // Added this parameter
+        )
+    }
+    @Provides
+    @Singleton
+    fun provideNetworkUtils(@ApplicationContext context: Context): NetworkUtils {
+        return NetworkUtils(context)
+    }
 
 
     @Provides
     @Singleton
-    fun provideCallbackManager(): CallbackManager {
-        return CallbackManager.Factory.create()
+    fun provideImageHandler(@ApplicationContext context: Context): ImageHandler {
+        return ImageHandler(context)
     }
 
     @Provides
-    @Singleton
-    fun provideFirebaseFirestore(): FirebaseFirestore {
-        return FirebaseFirestore.getInstance()
+    fun provideSavedStateRegistryOwner(
+        @ApplicationContext context: Context
+    ): SavedStateRegistryOwner {
+        return context as ComponentActivity
     }
 
-    @Provides
-    @Singleton
-    fun provideAIFeatures(
-        openAI: OpenAI,
-        userRepository: UserRepository,
-        questionRepository: QuestionRepository
-    ): AIFeatures {
-        return AIFeatures(openAI, userRepository, questionRepository)
-    }
+
+@Provides
+@Singleton
+fun provideGoogleSignInClient(@ApplicationContext context: Context): GoogleSignInClient {
+    val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+        .requestIdToken(context.getString(R.string.default_web_client_id))
+        .requestEmail()
+        .build()
+    return GoogleSignIn.getClient(context, gso)
 }
+
+@Provides
+@Singleton
+fun provideGoogleAuthManager(
+    @ApplicationContext context: Context,
+    firebaseAuth: FirebaseAuth
+): GoogleAuthManager = GoogleAuthManager(context, firebaseAuth)
+
+
+@Provides
+@Singleton
+fun provideCallbackManager(): CallbackManager {
+    return CallbackManager.Factory.create()
+}
+
+
+@Provides
+@Singleton
+fun provideFirebaseFirestore(): FirebaseFirestore {
+    return FirebaseFirestore.getInstance()
+}
+
+@Provides
+@Singleton
+fun provideAIFeatures(
+    openAI: OpenAI,
+    userRepository: UserRepository,
+    questionRepository: QuestionRepository
+): AIFeatures {
+    return AIFeatures(openAI, userRepository, questionRepository)
+}}
+

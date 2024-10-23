@@ -1,8 +1,8 @@
 {
   "formatVersion": 1,
   "database": {
-    "version": 15,
-    "identityHash": "adf43a980be7e95b7bd7a3765892acdb",
+    "version": 16,
+    "identityHash": "8a0914c0196bee65918bf56c8a199981",
     "entities": [
       {
         "tableName": "users",
@@ -128,7 +128,7 @@
       },
       {
         "tableName": "dogs",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `ownerId` TEXT NOT NULL, `name` TEXT NOT NULL, `breed` TEXT NOT NULL, `age` INTEGER NOT NULL, `gender` TEXT NOT NULL, `size` TEXT NOT NULL, `energyLevel` TEXT NOT NULL, `friendliness` TEXT NOT NULL, `profilePictureUrl` TEXT, `isSpayedNeutered` TEXT, `friendlyWithDogs` TEXT, `friendlyWithChildren` TEXT, `specialNeeds` TEXT, `favoriteToy` TEXT, `preferredActivities` TEXT, `walkFrequency` TEXT, `favoriteTreat` TEXT, `trainingCertifications` TEXT, `latitude` REAL, `longitude` REAL, `photoUrls` TEXT NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`ownerId`) REFERENCES `users`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `ownerId` TEXT NOT NULL, `name` TEXT NOT NULL, `breed` TEXT NOT NULL, `age` INTEGER NOT NULL, `gender` TEXT NOT NULL, `size` TEXT NOT NULL, `energyLevel` TEXT NOT NULL, `friendliness` TEXT NOT NULL, `profilePictureUrl` TEXT, `isSpayedNeutered` TEXT, `friendlyWithDogs` TEXT, `friendlyWithChildren` TEXT, `specialNeeds` TEXT, `favoriteToy` TEXT, `preferredActivities` TEXT, `walkFrequency` TEXT, `favoriteTreat` TEXT, `trainingCertifications` TEXT, `latitude` REAL, `longitude` REAL, `photoUrls` TEXT NOT NULL, `achievements` TEXT NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`ownerId`) REFERENCES `users`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
         "fields": [
           {
             "fieldPath": "id",
@@ -259,6 +259,12 @@
           {
             "fieldPath": "photoUrls",
             "columnName": "photoUrls",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "achievements",
+            "columnName": "achievements",
             "affinity": "TEXT",
             "notNull": true
           }
@@ -810,7 +816,7 @@
     "views": [],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'adf43a980be7e95b7bd7a3765892acdb')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '8a0914c0196bee65918bf56c8a199981')"
     ]
   }
 }

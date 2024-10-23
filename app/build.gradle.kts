@@ -116,6 +116,9 @@ dependencies {
     implementation(libs.gson)
     implementation(libs.recaptcha)
     implementation (libs.androidx.material.icons.extended)
+    implementation (libs.androidx.lifecycle.runtime.compose)
+    implementation (libs.androidx.exifinterface)
+
 
     // Retrofit
     implementation(libs.retrofit)
@@ -154,6 +157,13 @@ dependencies {
     implementation(libs.firebase.vertexai)
     implementation(libs.firebase.appcheck.playintegrity)
     implementation(libs.firebase.appcheck.safetynet)
+    implementation (libs.firebase.firestore.ktx.v2470)
+
+
+    //Image
+    implementation(libs.coil.compose.v222)
+
+
 
     // Google Services
     implementation(libs.play.services.auth)

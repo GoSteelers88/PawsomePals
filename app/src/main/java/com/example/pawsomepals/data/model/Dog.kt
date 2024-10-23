@@ -1,9 +1,6 @@
 package com.example.pawsomepals.data.model
 
-import androidx.room.Entity
-import androidx.room.ForeignKey
-import androidx.room.Index
-import androidx.room.PrimaryKey
+import androidx.room.*
 import com.google.firebase.database.IgnoreExtraProperties
 
 @IgnoreExtraProperties
@@ -18,8 +15,8 @@ import com.google.firebase.database.IgnoreExtraProperties
         )
     ],
     indices = [Index(value = ["ownerId"])]
-
 )
+@TypeConverters(AchievementTypeConverter::class)
 data class Dog(
     @PrimaryKey var id: String = "",
     var ownerId: String = "",
@@ -41,8 +38,21 @@ data class Dog(
     var favoriteTreat: String? = null,
     var trainingCertifications: String? = null,
     var latitude: Double? = null,
-    var longitude: Double? = null
+    var longitude: Double? = null,
+    val photoUrls: List<String?> = List(6) { null },
+    var trainability: String? = null,
+    var friendlyWithStrangers: String? = null,
+    var exerciseNeeds: String? = null,
+    var groomingNeeds: String? = null,
+    var weight: Double? = null,
+    @TypeConverters(AchievementTypeConverter::class)
+    val achievements: List<Achievement> = emptyList()
 ) {
     // No-argument constructor required by Firebase
     constructor() : this("", "", "", "", 0, "", "", "", "")
 }
+
+data class Achievement(
+    val title: String = "",
+    val description: String = ""
+)

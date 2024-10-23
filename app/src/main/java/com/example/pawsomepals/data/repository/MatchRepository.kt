@@ -1,7 +1,7 @@
 package com.example.pawsomepals.data.repository
 
 import com.example.pawsomepals.data.model.Match
-import com.example.pawsomepals.data.model.DogProfile
+import com.example.pawsomepals.data.model.Dog
 import com.example.pawsomepals.service.MatchingService
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import javax.inject.Inject
 import javax.inject.Singleton
+
 
 @Singleton
 class MatchRepository @Inject constructor(
@@ -54,7 +55,7 @@ class MatchRepository @Inject constructor(
         firestore.collection("matches").document(matchId).set(match).await()
     }
 
-    suspend fun getUserMatches(): List<DogProfile> {
+    suspend fun getUserMatches(): List<Dog> {
         val matchesQuery = firestore.collection("matches")
             .whereEqualTo("user1Id", userId)
             .get()
@@ -76,7 +77,7 @@ class MatchRepository @Inject constructor(
     }
 
 
-    fun getRecentMatches(limit: Int = 10): Flow<List<DogProfile>> = flow {
+    fun getRecentMatches(limit: Int = 10): Flow<List<Dog>> = flow {
         val matchesQuery = firestore.collection("matches")
             .whereEqualTo("user1Id", userId)
             .orderBy("timestamp")
@@ -85,7 +86,8 @@ class MatchRepository @Inject constructor(
             .await()
 
         val matchedUserIds = matchesQuery.documents.mapNotNull { it.getString("user2Id") }
-        val matchedProfiles = matchedUserIds.mapNotNull { dogProfileRepository.getDogProfileById(it) }
+        val matchedProfiles =
+            matchedUserIds.mapNotNull { dogProfileRepository.getDogProfileById(it) }
         emit(matchedProfiles)
     }
 

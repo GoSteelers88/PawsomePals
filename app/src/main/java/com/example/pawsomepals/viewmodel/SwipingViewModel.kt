@@ -2,7 +2,7 @@ package com.example.pawsomepals.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.pawsomepals.data.model.DogProfile
+import com.example.pawsomepals.data.model.Dog
 import com.example.pawsomepals.data.repository.DogProfileRepository
 import com.example.pawsomepals.data.repository.MatchRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -17,13 +17,16 @@ class SwipingViewModel @Inject constructor(
     private val matchRepository: MatchRepository
 ) : ViewModel() {
 
-    private val _currentProfile = MutableStateFlow<DogProfile?>(null)
-    val currentProfile: StateFlow<DogProfile?> = _currentProfile
+    private val _currentProfile = MutableStateFlow<Dog?>(null)
+    val currentProfile: StateFlow<Dog?> = _currentProfile
 
-    private val _matches = MutableStateFlow<List<DogProfile>>(emptyList())
-    val matches: StateFlow<List<DogProfile>> = _matches
+    private val _matches = MutableStateFlow<List<Dog>>(emptyList())
+    val matches: StateFlow<List<Dog>> = _matches
 
-    private val profiles = mutableListOf<DogProfile>()
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage
+
+    private val profiles = mutableListOf<Dog>()
     private var currentIndex = 0
 
     init {
@@ -38,7 +41,7 @@ class SwipingViewModel @Inject constructor(
                 profiles.addAll(dogProfileRepository.getSwipingProfiles())
                 showNextProfile()
             } catch (e: Exception) {
-                // Handle error (e.g., show error message)
+                _errorMessage.value = "Failed to load profiles: ${e.localizedMessage}"
             }
         }
     }
@@ -48,7 +51,7 @@ class SwipingViewModel @Inject constructor(
             try {
                 _matches.value = matchRepository.getUserMatches()
             } catch (e: Exception) {
-                // Handle error (e.g., show error message)
+                _errorMessage.value = "Failed to load matches: ${e.localizedMessage}"
             }
         }
     }
@@ -75,10 +78,10 @@ class SwipingViewModel @Inject constructor(
         }
     }
 
-    private suspend fun checkForMatch(profile: DogProfile) {
+    private suspend fun checkForMatch(profile: Dog) {
         if (matchRepository.isMatch(profile.id)) {
             // It's a match!
-            _matches.value += profile
+            _matches.value = _matches.value + profile
             // You could also trigger a notification or UI event here
         }
     }
@@ -87,7 +90,11 @@ class SwipingViewModel @Inject constructor(
         loadProfiles()
     }
 
-    fun getMatchById(matchId: String): DogProfile? {
+    fun getMatchById(matchId: String): Dog? {
         return _matches.value.find { it.id == matchId }
+    }
+
+    fun clearErrorMessage() {
+        _errorMessage.value = null
     }
 }

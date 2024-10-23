@@ -9,5 +9,6 @@ data class Question(
     val userId: String,
     val question: String,
     val answer: String,
-    val timestamp: Long
+    val timestamp: Long,
+    val options: List<String>? = null
 )

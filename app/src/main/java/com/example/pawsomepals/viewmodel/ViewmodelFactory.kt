@@ -1,29 +1,27 @@
 package com.example.pawsomepals.viewmodel
 
 import android.app.Application
+import android.content.Context
+import androidx.activity.ComponentActivity
+import androidx.lifecycle.AbstractSavedStateViewModelFactory
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
-import com.example.pawsomepals.data.repository.AuthRepository
-import com.example.pawsomepals.data.repository.ChatRepository
-import com.example.pawsomepals.data.repository.OpenAIRepository
-import com.example.pawsomepals.data.repository.PlaydateRepository
-import com.example.pawsomepals.data.repository.UserRepository
+import com.example.pawsomepals.auth.GoogleAuthManager
+import com.example.pawsomepals.data.DataManager
+import com.example.pawsomepals.data.repository.*
 import com.example.pawsomepals.notification.NotificationManager
 import com.example.pawsomepals.service.LocationService
 import com.example.pawsomepals.service.LocationSuggestionService
 import com.example.pawsomepals.service.MatchingService
 import com.example.pawsomepals.utils.RecaptchaManager
 import com.facebook.CallbackManager
-import dagger.hilt.android.lifecycle.HiltViewModel
+import com.google.firebase.storage.FirebaseStorage
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
 import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
-import javax.inject.Singleton
-import android.content.Context
-import com.example.pawsomepals.auth.GoogleAuthManager
 
-
-@Singleton
-class ViewModelFactory @Inject constructor(
+class ViewModelFactory @AssistedInject constructor(
     private val userRepository: UserRepository,
     private val chatRepository: ChatRepository,
     private val playdateRepository: PlaydateRepository,
@@ -37,29 +35,33 @@ class ViewModelFactory @Inject constructor(
     private val facebookCallbackManager: CallbackManager,
     private val application: Application,
     @ApplicationContext private val context: Context,
-    private val googleAuthManager: GoogleAuthManager
+    private val googleAuthManager: GoogleAuthManager,
+    private val storage: FirebaseStorage,
+    private val dataManager: DataManager,
+    @Assisted private val owner: ComponentActivity
+) : AbstractSavedStateViewModelFactory(owner, null) {
 
-
-) : ViewModelProvider.Factory {
-
-    @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+    override fun <T : ViewModel> create(
+        key: String,
+        modelClass: Class<T>,
+        handle: SavedStateHandle
+    ): T {
         return when {
-            modelClass.isAssignableFrom(AuthViewModel::class.java) ->
-                AuthViewModel(
+            modelClass.isAssignableFrom(ProfileViewModel::class.java) -> {
+                ProfileViewModel(
                     userRepository,
-                    authRepository,
-                    recaptchaManager,
-                    facebookCallbackManager,
-                    context,
-                    googleAuthManager
-
+                    locationService,
+                    storage,
+                    dataManager,
+                    handle
                 ) as T
-
-            modelClass.isAssignableFrom(ProfileViewModel::class.java) ->
-                ProfileViewModel(userRepository, locationService) as T
-            // Add other ViewModels here...
+            }
             else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
         }
+    }
+
+    @AssistedFactory
+    interface Factory {
+        fun create(owner: ComponentActivity): ViewModelFactory
     }
 }

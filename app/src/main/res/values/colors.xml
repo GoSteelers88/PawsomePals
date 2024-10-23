@@ -7,4 +7,9 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+
+    <!-- Beige theme colors -->
+    <color name="background_beige">#FFF5F5DC</color>
+    <color name="light_beige">#FFF8F6F1</color>
+    <color name="dark_beige">#FFE8E6DF</color>
 </resources>
