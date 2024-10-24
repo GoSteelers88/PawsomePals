@@ -239,7 +239,8 @@ object AppModule {
         storage: FirebaseStorage,
         @ApplicationContext context: Context,
         questionRepository: QuestionRepository,
-        imageHandler: ImageHandler  // Added this parameter
+        imageHandler: ImageHandler,
+        networkUtils: NetworkUtils  // Added missing parameter
     ): DataManager {
         return DataManager(
             appDatabase = appDatabase,
@@ -248,7 +249,8 @@ object AppModule {
             storage = storage,
             context = context,
             questionRepository = questionRepository,
-            imageHandler = imageHandler  // Added this parameter
+            imageHandler = imageHandler,
+            networkUtils = networkUtils  // Added to constructor call
         )
     }
     @Provides
@@ -256,6 +258,7 @@ object AppModule {
     fun provideNetworkUtils(@ApplicationContext context: Context): NetworkUtils {
         return NetworkUtils(context)
     }
+
 
 
     @Provides

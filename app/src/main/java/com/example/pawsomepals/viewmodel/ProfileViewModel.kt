@@ -17,12 +17,14 @@ import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import com.google.firebase.storage.FirebaseStorage
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 @HiltViewModel
@@ -35,6 +37,8 @@ class ProfileViewModel @Inject constructor(
 ) : ViewModel() {
     private val firestore = Firebase.firestore
     private val auth = Firebase.auth
+
+
 
     private val _userProfile = MutableStateFlow<User?>(null)
     val userProfile: StateFlow<User?> = _userProfile
@@ -107,17 +111,8 @@ class ProfileViewModel @Inject constructor(
             }
     }
 
-    fun updateUserProfile(updatedUser: User) {
-        viewModelScope.launch {
-            try {
-                dataManager.updateUserProfile(updatedUser)
-                // The observer will automatically update the UI
-            } catch (e: Exception) {
-                Log.e("ProfileViewModel", "Error updating user profile", e)
-                _error.value = "Failed to update profile: ${e.message}"
-            }
-        }
-    }
+
+
 
     fun loadQuestionnaireResponses(userId: String, dogId: String) {
         viewModelScope.launch {
@@ -203,6 +198,25 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
+    fun updateUserProfile(user: User) {
+        viewModelScope.launch {
+            try {
+                _isLoading.value = true
+                withContext(Dispatchers.IO) {
+                    dataManager.updateUserProfile(user)
+                }
+                _userProfile.value = user
+                Log.d("ProfileViewModel", "User profile updated successfully: ${user.id}")
+            } catch (e: Exception) {
+                Log.e("ProfileViewModel", "Error updating user profile", e)
+                _error.value = "Failed to update profile: ${e.message}"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+}
+
     fun updateUserProfilePicture(uri: Uri) {
         viewModelScope.launch {
             try {
@@ -213,20 +227,26 @@ class ProfileViewModel @Inject constructor(
                     return@launch
                 }
 
+                Log.d("ProfileViewModel", "Starting profile picture update")
                 val downloadUrl = dataManager.updateUserProfilePicture(uri, user.uid)
 
                 _userProfile.value?.let { currentUser ->
                     val updatedUser = currentUser.copy(profilePictureUrl = downloadUrl)
                     _userProfile.value = updatedUser
+                    withContext(Dispatchers.IO) {
+                        dataManager.updateUserProfile(updatedUser)
+                    }
+                    Log.d("ProfileViewModel", "Profile picture updated successfully")
                 }
             } catch (e: Exception) {
-                Log.e("ProfileViewModel", "Error updating user profile picture: ${e.message}")
+                Log.e("ProfileViewModel", "Error updating profile picture", e)
                 _error.value = "Failed to update profile picture: ${e.message}"
             } finally {
                 _isLoading.value = false
             }
         }
     }
+
 
     fun loadDogProfile(dogId: String) {
         viewModelScope.launch {
@@ -338,30 +358,35 @@ class ProfileViewModel @Inject constructor(
             }
     }
 
-    fun updateDogProfilePicture(dogId: String, index: Int, uri: Uri) {
-        viewModelScope.launch {
-            try {
-                val downloadUrl = dataManager.updateDogProfilePicture(index, uri, dogId)
-                // The observer will update _userDogs
-            } catch (e: Exception) {
-                Log.e("ProfileViewModel", "Error updating dog profile picture: ${e.message}", e)
-            }
-        }
-    }
-
-
     fun updateDogProfilePicture(index: Int, uri: Uri) {
         viewModelScope.launch {
             try {
+                _isLoading.value = true
                 _dogProfile.value?.let { currentDog ->
                     val downloadUrl = dataManager.updateDogProfilePicture(index, uri, currentDog.id)
-                    // Update the local _dogProfile.value if needed
+
+                    // Update the local dog profile with the new image URL
+                    val updatedPhotoUrls = currentDog.photoUrls.toMutableList()
+                    if (index < updatedPhotoUrls.size) {
+                        updatedPhotoUrls[index] = downloadUrl
+                    } else {
+                        updatedPhotoUrls.add(downloadUrl)
+                    }
+
+                    val updatedDog = currentDog.copy(photoUrls = updatedPhotoUrls)
+                    dataManager.createOrUpdateDogProfile(updatedDog)
                 }
             } catch (e: Exception) {
-                Log.e("ProfileViewModel", "Error updating dog profile picture: ${e.message}", e)
+                Log.e("ProfileViewModel", "Error updating dog profile picture: ${e.message}")
+                _error.value = "Failed to update dog profile picture: ${e.message}"
+            } finally {
+                _isLoading.value = false
             }
         }
     }
+
+
+
 
     fun getOutputFileUri(context: Context): Uri {
         return dataManager.getOutputFileUri(context)

@@ -1,18 +1,17 @@
 package com.example.pawsomepals.utils
 
+import android.Manifest
 import android.content.Context
 import android.net.Uri
+import android.os.Environment
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import android.Manifest
 import androidx.activity.result.ActivityResultLauncher
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.*
+import androidx.core.content.FileProvider
+import java.io.File
 
+// CameraState class
 class CameraState(
     private val context: Context,
     private val imageHandler: ImageHandler,
@@ -21,9 +20,21 @@ class CameraState(
     private var currentPhotoUri: Uri? = null
 
     fun getNewPhotoUri(): Uri {
-        val (_, uri) = imageHandler.createImageFile()
-        currentPhotoUri = uri
-        return uri
+        val tempFile = File.createTempFile(
+            "JPEG_${System.currentTimeMillis()}_",
+            ".jpg",
+            context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+        ).apply {
+            deleteOnExit()
+        }
+
+        currentPhotoUri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            tempFile
+        )
+
+        return currentPhotoUri!!
     }
 
     fun handlePhotoTaken(success: Boolean) {
@@ -33,6 +44,17 @@ class CameraState(
     }
 }
 
+// CameraPermissionState class
+class CameraPermissionState {
+    var permissionGranted by mutableStateOf(false)
+        private set
+
+    fun handlePermissionResult(granted: Boolean) {
+        permissionGranted = granted
+    }
+}
+
+// Composable functions
 @Composable
 fun rememberCameraState(
     context: Context,
@@ -41,15 +63,6 @@ fun rememberCameraState(
 ): CameraState {
     return remember(context, imageHandler, onPhotoTaken) {
         CameraState(context, imageHandler, onPhotoTaken)
-    }
-}
-
-class CameraPermissionState {
-    var permissionGranted by mutableStateOf(false)
-        private set
-
-    fun handlePermissionResult(granted: Boolean) {
-        permissionGranted = granted
     }
 }
 
@@ -94,5 +107,3 @@ fun rememberGalleryLauncher(onImageSelected: (Uri) -> Unit): ActivityResultLaunc
         uri?.let { onImageSelected(it) }
     }
 }
-
-//

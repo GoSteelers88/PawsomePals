@@ -17,6 +17,7 @@ import com.example.pawsomepals.data.repository.QuestionRepository
 import com.example.pawsomepals.utils.ImageHandler
 import com.example.pawsomepals.utils.NetworkUtils
 import com.example.pawsomepals.viewmodel.AuthViewModel
+import com.google.android.datatransport.runtime.dagger.Provides
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
@@ -323,122 +324,31 @@ class DataManager @Inject constructor(
         }
     }
 
-    @RequiresExtension(extension = Build.VERSION_CODES.S, version = 7)
-    suspend fun updateUserProfilePicture(uri: Uri, userId: String): String {
-        return try {
-            if (!networkUtils.isNetworkAvailable()) {
-                throw NetworkException("No internet connection available")
-            }
-
-            val currentUser = auth.currentUser
-            if (currentUser != null && currentUser.uid == userId) {
-                _uploadProgress.value = 0f
-
-                Log.d("DataManager", "Starting image compression")
-                val compressedFile = imageHandler.compressImage(uri)
-
-                val imageRef = storage.reference.child("user_images/$userId/${UUID.randomUUID()}")
-
-                Log.d("DataManager", "Starting upload")
-                val uploadTask = imageRef.putFile(compressedFile)
-                    .addOnProgressListener { taskSnapshot ->
-                        val progress = (100.0 * taskSnapshot.bytesTransferred / taskSnapshot.totalByteCount)
-                        _uploadProgress.value = progress.toFloat()
-                    }.await()
-
-                val downloadUrl = uploadTask.storage.downloadUrl.await().toString()
-
-                // Update Firestore and local DB
-                if (networkUtils.isNetworkAvailable()) {
-                    firestore.collection("users").document(userId)
-                        .update("profilePictureUrl", downloadUrl).await()
-                }
-
-                val existingUser = userDao.getUserById(userId)
-                existingUser?.let {
-                    val updatedUser = it.copy(profilePictureUrl = downloadUrl)
-                    userDao.updateUser(updatedUser)
-                }
-
-                // Cleanup
-                try {
-                    compressedFile.delete()
-                } catch (e: Exception) {
-                    Log.e("DataManager", "Error deleting temp file", e)
-                }
-
-                _uploadProgress.value = 100f
-                downloadUrl
-            } else {
-                throw IllegalStateException("Unauthorized attempt to update profile picture")
-            }
-        } catch (e: Exception) {
-            _uploadProgress.value = 0f
-            Log.e("DataManager", "Error updating user profile picture", e)
-            throw e
-        }
+    @Provides
+    @Singleton
+    fun provideDataManager(
+        appDatabase: AppDatabase,
+        firestore: FirebaseFirestore,
+        auth: FirebaseAuth,
+        storage: FirebaseStorage,
+        @ApplicationContext context: Context,
+        questionRepository: QuestionRepository,
+        imageHandler: ImageHandler,
+        networkUtils: NetworkUtils  // Added missing parameter
+    ): DataManager {
+        return DataManager(
+            appDatabase = appDatabase,
+            firestore = firestore,
+            auth = auth,
+            storage = storage,
+            context = context,
+            questionRepository = questionRepository,
+            imageHandler = imageHandler,
+            networkUtils = networkUtils  // Added to constructor call
+        )
     }
 
 
-    private suspend fun compressImage(uri: Uri): File {
-        return withContext(Dispatchers.IO) {
-            var inputStream: java.io.InputStream? = null
-            var outputStream: java.io.FileOutputStream? = null
-
-            try {
-                // Create output file first
-                val outputFile = File(context.cacheDir, "compressed_${System.currentTimeMillis()}.jpg")
-
-                // Setup bitmap options for initial decode
-                val options = android.graphics.BitmapFactory.Options().apply {
-                    inJustDecodeBounds = true
-                }
-
-                // First pass - just decode bounds
-                inputStream = context.contentResolver.openInputStream(uri)
-                android.graphics.BitmapFactory.decodeStream(inputStream, null, options)
-                inputStream?.close()
-
-                // Calculate best sample size
-                options.apply {
-                    inJustDecodeBounds = false
-                    inSampleSize = calculateInSampleSize(options, 1024, 1024) // Target size
-                }
-
-                // Second pass - decode with calculated sample size
-                inputStream = context.contentResolver.openInputStream(uri)
-                val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream, null, options)
-
-                if (bitmap == null) {
-                    throw IllegalStateException("Failed to decode image")
-                }
-
-                // Compress and save
-                outputStream = FileOutputStream(outputFile)
-                val success = bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, outputStream)
-
-                if (!success) {
-                    throw IllegalStateException("Failed to compress image")
-                }
-
-                outputFile
-
-            } catch (e: Exception) {
-                Log.e("DataManager", "Error compressing image", e)
-                throw e
-            } finally {
-                try {
-                    inputStream?.close()
-                    outputStream?.apply {
-                        flush()
-                        close()
-                    }
-                } catch (e: Exception) {
-                    Log.e("DataManager", "Error closing streams", e)
-                }
-            }
-        }
-    }
 
     private fun calculateInSampleSize(
         options: android.graphics.BitmapFactory.Options,

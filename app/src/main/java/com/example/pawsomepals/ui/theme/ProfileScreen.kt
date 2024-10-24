@@ -44,6 +44,8 @@ fun ProfileScreen(
     var tempPhotoUri by remember { mutableStateOf<Uri?>(null) }
     var isUpdatingPhoto by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    val user = viewModel.userProfile.collectAsState().value
+
 
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (success && tempPhotoUri != null) {

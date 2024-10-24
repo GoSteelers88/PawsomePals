@@ -3,11 +3,21 @@ package com.example.pawsomepals.utils
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
+import androidx.core.content.FileProvider
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -21,58 +31,35 @@ class ImageHandler @Inject constructor(
         private const val BUFFER_SIZE = 8192
     }
 
-    suspend fun compressImage(uri: Uri): File {
-        return try {
-            // Create output file in cache directory
-            val outputFile = File(
-                context.cacheDir,
-                "compressed_${System.currentTimeMillis()}.jpg"
+    suspend fun compressImage(uri: Uri): Uri {
+        return withContext(Dispatchers.IO) {
+            val outputFile = File(context.cacheDir, "compressed_${System.currentTimeMillis()}.jpg")
+
+            val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri))
+            } else {
+                MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+            }
+
+            val compressedBitmap = Bitmap.createScaledBitmap(
+                bitmap,
+                1024,
+                (1024 * (bitmap.height.toFloat() / bitmap.width.toFloat())).toInt(),
+                true
             )
 
-            context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                // Wrap with BufferedInputStream for mark/reset support
-                BufferedInputStream(inputStream, BUFFER_SIZE).use { bufferedStream ->
-                    // First pass - get image dimensions
-                    val options = BitmapFactory.Options().apply {
-                        inJustDecodeBounds = true
-                    }
-                    bufferedStream.mark(BUFFER_SIZE)
-                    BitmapFactory.decodeStream(bufferedStream, null, options)
+            FileOutputStream(outputFile).use { out ->
+                compressedBitmap.compress(Bitmap.CompressFormat.JPEG, 80, out)
+            }
 
-                    // Calculate sample size
-                    options.apply {
-                        inJustDecodeBounds = false
-                        inSampleSize = calculateInSampleSize(
-                            width = outWidth,
-                            height = outHeight,
-                            reqWidth = MAX_IMAGE_DIMENSION,
-                            reqHeight = MAX_IMAGE_DIMENSION
-                        )
-                    }
-
-                    // Reset stream for second pass
-                    bufferedStream.reset()
-
-                    // Second pass - decode with calculated sample size
-                    val bitmap = BitmapFactory.decodeStream(bufferedStream, null, options)
-                        ?: throw IllegalStateException("Failed to decode image")
-
-                    // Compress and save
-                    FileOutputStream(outputFile).use { outputStream ->
-                        bitmap.compress(Bitmap.CompressFormat.JPEG, COMPRESSED_IMAGE_QUALITY, outputStream)
-                    }
-
-                    // Clean up
-                    bitmap.recycle()
-                }
-            } ?: throw IllegalStateException("Failed to open input stream")
-
-            outputFile
-        } catch (e: Exception) {
-            Log.e("ImageHandler", "Error compressing image", e)
-            throw e
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                outputFile
+            )
         }
     }
+
 
     private fun calculateInSampleSize(
         width: Int,
@@ -94,20 +81,46 @@ class ImageHandler @Inject constructor(
         return inSampleSize
     }
 
-    fun cleanupTempFiles() {
-        try {
-            context.cacheDir.listFiles()?.forEach { file ->
-                if (file.name.startsWith("compressed_") && file.isFile) {
-                    try {
-                        file.delete()
-                        Log.d("ImageHandler", "Deleted temp file: ${file.name}")
-                    } catch (e: Exception) {
-                        Log.e("ImageHandler", "Error deleting file: ${file.name}", e)
+    class ImageHandler @Inject constructor(
+        private val context: Context
+    ) {
+        fun createImageFile(): Pair<File, Uri> {
+            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val imageFileName = "JPEG_${timeStamp}_"
+            val storageDir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+
+            val imageFile = File.createTempFile(
+                imageFileName,
+                ".jpg",
+                storageDir
+            ).apply {
+                deleteOnExit()
+            }
+
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                imageFile
+            )
+
+            return Pair(imageFile, uri)
+        }
+
+        fun cleanupTempFiles() {
+            try {
+                context.cacheDir.listFiles()?.forEach { file ->
+                    if (file.name.startsWith("compressed_") && file.isFile) {
+                        try {
+                            file.delete()
+                            Log.d("ImageHandler", "Deleted temp file: ${file.name}")
+                        } catch (e: Exception) {
+                            Log.e("ImageHandler", "Error deleting file: ${file.name}", e)
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                Log.e("ImageHandler", "Error cleaning up temp files", e)
             }
-        } catch (e: Exception) {
-            Log.e("ImageHandler", "Error cleaning up temp files", e)
         }
     }
 }
