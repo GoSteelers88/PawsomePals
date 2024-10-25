@@ -32,6 +32,7 @@ import com.example.pawsomepals.subscription.SubscriptionManager
 import com.example.pawsomepals.utils.ImageHandler
 import com.example.pawsomepals.utils.NetworkUtils
 import com.example.pawsomepals.utils.RecaptchaManager
+import com.example.pawsomepals.viewmodel.DogProfileViewModel
 import com.example.pawsomepals.viewmodel.ViewModelFactory
 import com.facebook.CallbackManager
 import com.google.android.gms.auth.api.signin.GoogleSignIn
@@ -48,6 +49,7 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.components.ActivityComponent
+import dagger.hilt.android.components.ViewModelComponent
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import retrofit2.Retrofit
@@ -82,6 +84,28 @@ object AppModule {
         return AuthRepository(firebaseAuth, firestore, recaptchaManager, context)
     }
 
+    @Module
+    @InstallIn(ViewModelComponent::class)
+    object ViewModelModule {
+        @Provides
+        fun provideDogProfileViewModel(
+            dogProfileRepository: DogProfileRepository,
+            userRepository: UserRepository,
+            photoRepository: PhotoRepository,
+            firebaseAuth: FirebaseAuth,
+            storage: FirebaseStorage,
+            dataManager: DataManager
+        ): DogProfileViewModel {
+            return DogProfileViewModel(
+                dogProfileRepository,
+                userRepository,
+                photoRepository,
+                firebaseAuth,
+                storage,
+                dataManager
+            )
+        }
+    }
     @Provides
     @Singleton
     fun provideSubscriptionManager(userRepository: UserRepository): SubscriptionManager {
@@ -258,6 +282,7 @@ object AppModule {
     fun provideNetworkUtils(@ApplicationContext context: Context): NetworkUtils {
         return NetworkUtils(context)
     }
+
 
 
 

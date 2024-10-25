@@ -49,11 +49,12 @@ class ViewModelFactory @AssistedInject constructor(
         return when {
             modelClass.isAssignableFrom(ProfileViewModel::class.java) -> {
                 ProfileViewModel(
-                    userRepository,
-                    locationService,
-                    storage,
-                    dataManager,
-                    handle
+                    application = application,
+                    userRepository = userRepository,
+                    locationService = locationService,
+                    storage = storage,
+                    dataManager = dataManager,
+                    savedStateHandle = handle
                 ) as T
             }
             else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")

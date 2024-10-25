@@ -3,6 +3,7 @@ package com.example.pawsomepals.viewmodel
 import android.content.Context
 import android.net.Uri
 import android.os.Environment
+import android.util.Log
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -26,6 +27,8 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import javax.inject.Inject
+import com.example.pawsomepals.data.model.ResultWrapper
+
 
 @HiltViewModel
 class DogProfileViewModel @Inject constructor(
@@ -36,6 +39,13 @@ class DogProfileViewModel @Inject constructor(
     private val storage: FirebaseStorage,
     private val dataManager: DataManager
 ) : ViewModel() {
+
+    // Add these new state flows
+    private val _currentDog = MutableStateFlow<Dog?>(null)
+    val currentDog: StateFlow<Dog?> = _currentDog.asStateFlow()
+
+    private val _userDogs = MutableStateFlow<List<Dog>>(emptyList())
+    val userDogs: StateFlow<List<Dog>> = _userDogs.asStateFlow()
 
     private val _dogProfile = MutableStateFlow<Dog?>(null)
     val dogProfile: StateFlow<Dog?> = _dogProfile.asStateFlow()
@@ -51,16 +61,71 @@ class DogProfileViewModel @Inject constructor(
         viewModelScope.launch {
             _dogProfileState.value = DogProfileState.Loading
             try {
-                val createdProfile = dogProfileRepository.createDogProfile(dog)
-                _dogProfile.value = createdProfile
-                _dogProfileState.value = DogProfileState.Success("Dog profile created successfully")
+                when (val result = dogProfileRepository.createDogProfile(dog)) {
+                    is ResultWrapper.Success<Dog> -> {  // Specify type explicitly
+                        _dogProfile.value = result.data
+                        _currentDog.value = result.data
+                        _dogProfileState.value = DogProfileState.Success("Dog profile created successfully")
+                    }
+                    is ResultWrapper.Error -> {
+                        _dogProfileState.value = DogProfileState.Error("Failed to create profile: ${result.exception.message}")
+                    }
+                }
             } catch (e: Exception) {
-                _dogProfileState.value = DogProfileState.Error("Failed to create dog profile: ${e.message}")
+                _dogProfileState.value = DogProfileState.Error("Error creating dog profile: ${e.message}")
             }
         }
     }
 
 
+    fun setCurrentDog(dogId: String) {
+        viewModelScope.launch {
+            _dogProfileState.value = DogProfileState.Loading
+            try {
+                Log.d("DogProfileViewModel", "Setting current dog with ID: $dogId")
+                dogProfileRepository.getDogProfile(dogId).collect { dog ->
+                    _currentDog.value = dog
+                    _dogProfile.value = dog
+                    _dogProfileState.value = DogProfileState.Success("Current dog set successfully: ${dog?.id}")
+                }
+            } catch (e: Exception) {
+                Log.e("DogProfileViewModel", "Failed to set current dog: $dogId", e)
+                _dogProfileState.value = DogProfileState.Error("Failed to set current dog: ${e.message}")
+            }
+        }
+    }
+    fun loadUserDogs() {
+        viewModelScope.launch {
+            _dogProfileState.value = DogProfileState.Loading
+            try {
+                val userId = getCurrentUserId()
+                Log.d("DogProfileViewModel", "Loading dogs for user: $userId")
+                dogProfileRepository.getDogProfilesByOwner(userId).collect { dogs ->
+                    _userDogs.value = dogs
+                    Log.d("DogProfileViewModel", "Loaded ${dogs.size} dogs. IDs: ${dogs.map { it.id }}")
+                    _dogProfileState.value = DogProfileState.Success("User dogs loaded successfully")
+                }
+            } catch (e: Exception) {
+                Log.e("DogProfileViewModel", "Failed to load user dogs", e)
+                _dogProfileState.value = DogProfileState.Error("Failed to load user dogs: ${e.message}")
+            }
+        }
+    }
+
+    fun fetchDogProfile(dogId: String) {
+        viewModelScope.launch {
+            _dogProfileState.value = DogProfileState.Loading
+            try {
+                dogProfileRepository.getDogProfile(dogId).collect { profile ->
+                    _dogProfile.value = profile
+                    _currentDog.value = profile  // Set as current dog as well
+                    _dogProfileState.value = DogProfileState.Success("Dog profile fetched successfully")
+                }
+            } catch (e: Exception) {
+                _dogProfileState.value = DogProfileState.Error("Failed to fetch dog profile: ${e.message}")
+            }
+        }
+    }
     fun updateDogProfilePicture(index: Int, uri: Uri) {
         viewModelScope.launch {
             try {
@@ -86,19 +151,7 @@ class DogProfileViewModel @Inject constructor(
         }
     }
 
-    fun fetchDogProfile(dogId: String) {
-        viewModelScope.launch {
-            _dogProfileState.value = DogProfileState.Loading
-            try {
-                dogProfileRepository.getDogProfile(dogId).collect { profile ->
-                    _dogProfile.value = profile
-                    _dogProfileState.value = DogProfileState.Success("Dog profile fetched successfully")
-                }
-            } catch (e: Exception) {
-                _dogProfileState.value = DogProfileState.Error("Failed to fetch dog profile: ${e.message}")
-            }
-        }
-    }
+
 
     fun updateDogProfile(field: String, value: String) {
         _dogProfile.value?.let { currentProfile ->
@@ -160,8 +213,9 @@ class DogProfileViewModel @Inject constructor(
         viewModelScope.launch {
             _dogProfileState.value = DogProfileState.Loading
             try {
-                val profiles = dogProfileRepository.getDogProfilesByOwner(ownerId)
-                _dogProfileState.value = DogProfileState.Success("Fetched ${profiles.size} dog profiles")
+                dogProfileRepository.getDogProfilesByOwner(ownerId).collect { profiles ->
+                    _dogProfileState.value = DogProfileState.Success("Fetched ${profiles.count()} dog profiles")
+                }
             } catch (e: Exception) {
                 _dogProfileState.value = DogProfileState.Error("Failed to fetch dog profiles: ${e.message}")
             }
@@ -201,13 +255,22 @@ class DogProfileViewModel @Inject constructor(
         viewModelScope.launch {
             _dogProfileState.value = DogProfileState.Loading
             try {
-                val profiles = dogProfileRepository.searchDogProfiles(query)
-                _dogProfileState.value = DogProfileState.Success("Found ${profiles.size} matching dog profiles")
+                when (val result = dogProfileRepository.searchDogProfiles(query)) {
+                    is ResultWrapper.Success -> {
+                        val profiles = result.data
+                        _dogProfileState.value = DogProfileState.Success("Found ${profiles.count()} matching dog profiles")
+                    }
+                    is ResultWrapper.Error -> {
+                        _dogProfileState.value = DogProfileState.Error("Failed to search profiles: ${result.exception.message}")
+                    }
+                }
             } catch (e: Exception) {
                 _dogProfileState.value = DogProfileState.Error("Failed to search dog profiles: ${e.message}")
             }
         }
     }
+
+
 
     fun resetState() {
         _dogProfileState.value = DogProfileState.Initial
@@ -215,6 +278,9 @@ class DogProfileViewModel @Inject constructor(
 
     private fun getCurrentUserId(): String {
         return firebaseAuth.currentUser?.uid ?: throw IllegalStateException("No user logged in")
+    }
+    fun clearCurrentDog() {
+        _currentDog.value = null
     }
 
     sealed class DogProfileState {

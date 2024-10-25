@@ -1,8 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <files-path name="my_images" path="my_images/"/>
-    <cache-path name="my_cache_images" path="." />
-    <external-files-path name="my_external_images" path="Pictures" />
-    <external-cache-path name="my_external_cache_images" path="." />
-    <external-path name="my_external_files" path="." />
+    <!-- App-specific internal storage for profile pictures -->
+    <files-path
+        name="profile_pictures"
+        path="profile_pictures/"/>
+
+    <!-- App-specific internal storage for dog photos -->
+    <files-path
+        name="dog_photos"
+        path="dog_photos/"/>
+
+    <!-- Temporary photos storage -->
+    <files-path
+        name="temp_photos"
+        path="temp_photos/"/>
+
+    <!-- Cache directory for image processing -->
+    <cache-path
+        name="image_cache"
+        path="." />
+
+    <!-- External storage for larger photo sets -->
+    <external-files-path
+        name="external_photos"
+        path="PawsomePals/Photos" />
+
+    <!-- External cache for temporary processing -->
+    <external-cache-path
+        name="external_cache"
+        path="." />
+
+    <!-- External storage access for backups -->
+    <external-path
+        name="external_files"
+        path="PawsomePals" />
 </paths>

@@ -37,24 +37,24 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.example.pawsomepals.R
 import com.example.pawsomepals.data.model.Dog
+import com.example.pawsomepals.viewmodel.DogProfileViewModel
 import com.example.pawsomepals.viewmodel.ProfileViewModel
+
 
 @Composable
 fun DogProfileTab(
-    viewModel: ProfileViewModel,
+    viewModel: ProfileViewModel,  // Change this to DogProfileViewModel
+    dogProfileViewModel: DogProfileViewModel,  // Add this
     cameraLauncher: ManagedActivityResultLauncher<Uri, Boolean>,
     galleryLauncher: ManagedActivityResultLauncher<String, Uri?>,
     onNavigateToAddDog: () -> Unit
 ) {
-    val userDogs by viewModel.userDogs.collectAsStateWithLifecycle()
+    val userDogs by dogProfileViewModel.userDogs.collectAsStateWithLifecycle()
+    val currentDog by dogProfileViewModel.currentDog.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
-        Log.d("DogProfileTab", "Number of dogs: ${userDogs.size}")
-        userDogs.forEach { dog ->
-            Log.d("DogProfileTab", "Dog: ${dog.name}")
-        }
+        dogProfileViewModel.loadUserDogs()
     }
-
     Column(
         modifier = Modifier
             .fillMaxSize()

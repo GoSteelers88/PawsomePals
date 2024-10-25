@@ -5,6 +5,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -21,7 +22,8 @@ fun AddEditDogProfileScreen(
     onNavigateToQuestionnaire: (String?) -> Unit
 ) {
     val dogProfile by viewModel.dogProfile.collectAsStateWithLifecycle()
-    var isLoading by remember { mutableStateOf(false) }
+    val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
+    val error by viewModel.error.collectAsStateWithLifecycle()
 
     LaunchedEffect(dogId) {
         if (dogId == "new") {
@@ -45,59 +47,77 @@ fun AddEditDogProfileScreen(
             )
         }
     ) { padding ->
-        if (isLoading) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = androidx.compose.ui.Alignment.Center
-            ) {
-                CircularProgressIndicator()
-            }
-        } else {
-            dogProfile?.let { dog ->
-                Column(
-                    modifier = Modifier
-                        .padding(padding)
-                        .padding(16.dp)
-                        .fillMaxSize()
-                ) {
-                    // Display current profile info
-                    SharedProfileSection(title = "Basic Information") {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            contentAlignment = Alignment.Center
+        ) {
+            when {
+                isLoading -> {
+                    CircularProgressIndicator()
+                }
+                error != null -> {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
                         Text(
-                            text = "Current profile information is shown below. To modify these details, please complete the questionnaire again.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = error ?: "An error occurred",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.error
                         )
                         Spacer(modifier = Modifier.height(16.dp))
-                        SharedDogProfileField("Name", dog.name)
-                        SharedDogProfileField("Breed", dog.breed)
-                        SharedDogProfileField("Age", "${dog.age} years")
-                        SharedDogProfileField("Gender", dog.gender)
-                    }
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    Button(
-                        onClick = { onNavigateToQuestionnaire(dogId) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Update Profile via Questionnaire")
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedButton(
-                        onClick = onNavigateBack,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Cancel")
+                        Button(onClick = { viewModel.loadDogProfile(dogId) }) {
+                            Text("Retry")
+                        }
                     }
                 }
-            } ?: run {
-                // Show error state if profile couldn't be loaded
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = androidx.compose.ui.Alignment.Center
-                ) {
+                dogProfile != null -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                    ) {
+                        SharedProfileSection(title = "Basic Information") {
+                            Text(
+                                text = "Current profile information is shown below. To modify these details, please complete the questionnaire again.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            with(dogProfile!!) {
+                                SharedDogProfileField("Name", name)
+                                SharedDogProfileField("Breed", breed)
+                                SharedDogProfileField("Age", "$age years")
+                                SharedDogProfileField("Gender", gender)
+                                size?.let { SharedDogProfileField("Size", it) }
+                                energyLevel?.let { SharedDogProfileField("Energy Level", it) }
+                                friendliness?.let { SharedDogProfileField("Friendliness", it) }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(24.dp))
+
+                        Button(
+                            onClick = { onNavigateToQuestionnaire(dogId) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Update Profile via Questionnaire")
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedButton(
+                            onClick = onNavigateBack,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Cancel")
+                        }
+                    }
+                }
+                else -> {
                     Text(
                         text = "Unable to load dog profile",
                         style = MaterialTheme.typography.bodyLarge,

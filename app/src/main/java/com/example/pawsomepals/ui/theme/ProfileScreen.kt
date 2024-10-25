@@ -27,12 +27,14 @@ import coil.compose.AsyncImage
 import com.example.pawsomepals.R
 import com.example.pawsomepals.data.model.User
 import com.example.pawsomepals.ui.components.*
+import com.example.pawsomepals.viewmodel.DogProfileViewModel
 import com.example.pawsomepals.viewmodel.ProfileViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
     viewModel: ProfileViewModel,
+    dogProfileViewModel: DogProfileViewModel,  // Add this parameter
     userId: String,
     onBackClick: () -> Unit,
     onNavigateToAddDog: () -> Unit
@@ -45,7 +47,6 @@ fun ProfileScreen(
     var isUpdatingPhoto by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val user = viewModel.userProfile.collectAsState().value
-
 
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (success && tempPhotoUri != null) {
@@ -78,6 +79,7 @@ fun ProfileScreen(
     LaunchedEffect(userId) {
         viewModel.loadProfileById(userId)
         viewModel.fetchUserDogs()
+        dogProfileViewModel.loadUserDogs()  // Add this line to load dog profiles
     }
 
     Scaffold(
@@ -111,6 +113,7 @@ fun ProfileScreen(
                 0 -> UserProfileTab(viewModel, cameraLauncher, galleryLauncher)
                 1 -> DogProfileTab(
                     viewModel = viewModel,
+                    dogProfileViewModel = dogProfileViewModel,  // Pass the dogProfileViewModel
                     cameraLauncher = cameraLauncher,
                     galleryLauncher = galleryLauncher,
                     onNavigateToAddDog = onNavigateToAddDog

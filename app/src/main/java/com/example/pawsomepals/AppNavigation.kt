@@ -9,6 +9,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -271,6 +272,8 @@ fun AppNavigation(
 
         composable(Screen.MainScreen.route) {
             val currentUser by authViewModel.currentUser.collectAsState()
+            val currentDog by dogProfileViewModel.currentDog.collectAsStateWithLifecycle()
+
             val isUserSetupComplete by remember {
                 derivedStateOf {
                     currentUser?.hasAcceptedTerms == true && currentUser?.hasCompletedQuestionnaire == true
@@ -321,20 +324,49 @@ fun AppNavigation(
                         }
                     },
                     onProfileClick = { userId -> navController.navigate(Screen.Profile.createRoute(userId)) },
-                    onDogProfileClick = { navController.navigate(Screen.DogProfile.route) },
+                    onDogProfileClick = {
+                        val dogId = dogProfileViewModel.currentDog.value?.id ?: "new"
+                        navController.navigate(Screen.DogProfile.createRoute(dogId))
+                    },
                     onPlaydateClick = { playdateId -> navController.navigate(Screen.Playdate.createRoute(playdateId)) },
                     onChatClick = { chatId -> navController.navigate(Screen.Chat.createRoute(chatId)) },
                     onHealthAdvisorClick = { navController.navigate(Screen.HealthAdvisor.route) },
                     onSettingsClick = { navController.navigate(Screen.Settings.route) },
                     onPhotoManagementClick = { navController.navigate(Screen.PhotoManagement.route) },
-                    onRatingClick = { navController.navigate(Screen.Rating.route) },
-                    onNotificationsClick = { navController.navigate(Screen.Notifications.route) },
-                    onSwipeClick = { navController.navigate(Screen.Swiping.route) },
-                    onSwipeScreenClick = { navController.navigate(Screen.Swiping.route) },
-                    onChatListClick = { navController.navigate(Screen.Chat.createRoute("")) },
-                    onSchedulePlaydateClick = { navController.navigate(Screen.Playdate.createRoute("")) },
-                    onPlaydateRequestsClick = { /* Add navigation or action for playdate requests */ },
-                )
+                    onRatingClick = {
+                        navController.navigate(Screen.Rating.createRoute("new")) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onNotificationsClick = {
+                        navController.navigate(Screen.Notifications.route) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onSwipeClick = {
+                        navController.navigate(Screen.Swiping.route) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onSwipeScreenClick = {
+                        navController.navigate(Screen.Swiping.route) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onChatListClick = {
+                        navController.navigate(Screen.Chat.createRoute("")) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onSchedulePlaydateClick = {
+                        navController.navigate(Screen.Playdate.createRoute("new")) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onPlaydateRequestsClick = {
+                        // TODO: Implement playdate requests navigation
+                        // navController.navigate(Screen.PlaydateRequests.route)
+                    })
             } else {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
@@ -352,6 +384,7 @@ fun AppNavigation(
             if (effectiveUserId.isNotBlank()) {
                 ProfileScreen(
                     viewModel = profileViewModel,
+                    dogProfileViewModel = dogProfileViewModel,  // Add this line
                     userId = effectiveUserId,
                     onBackClick = { navController.popBackStack() },
                     onNavigateToAddDog = { navController.navigate(Screen.AddEditDogProfile.createRoute()) }

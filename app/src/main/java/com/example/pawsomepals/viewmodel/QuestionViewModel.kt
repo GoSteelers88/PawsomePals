@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.pawsomepals.data.DataManager
+import com.example.pawsomepals.data.model.Dog
 import com.example.pawsomepals.data.model.QuestionnaireResponse
 import com.example.pawsomepals.data.repository.QuestionRepository
 import com.example.pawsomepals.data.repository.UserRepository
@@ -20,7 +21,9 @@ class QuestionnaireViewModel @Inject constructor(
     private val questionRepository: QuestionRepository,
     private val dataManager: DataManager,
     private val userRepository: UserRepository,
-    private val auth: FirebaseAuth
+    private val auth: FirebaseAuth,
+    private val dogProfileViewModel: DogProfileViewModel
+
 ) : ViewModel() {
 
     private val _questionnaireResponses = MutableStateFlow<Map<String, String>>(emptyMap())
@@ -58,33 +61,35 @@ class QuestionnaireViewModel @Inject constructor(
                 _isSubmitting.value = true
                 _error.value = null
 
-                Log.d("QuestionnaireViewModel", "Saving responses for userId: $userId, dogId: $dogId")
+                // Generate or use existing dogId
+                val finalDogId = dogId?.takeIf { it.isNotBlank() && it != "null" }
+                    ?: generateDogId(userId)
 
-                // Save questionnaire responses
+                Log.d("QuestionnaireViewModel", "Saving responses for dogId: $finalDogId")
+
+                // Save to repository
                 val questionnaireResponse = QuestionnaireResponse(
                     id = UUID.randomUUID().toString(),
                     userId = userId,
-                    dogId = dogId ?: "",
+                    dogId = finalDogId,
                     responses = responses
                 )
                 questionRepository.saveQuestionnaireResponse(questionnaireResponse)
 
-                // Update user completion status for initial questionnaire
+                // Create initial dog profile with the same dogId
                 if (dogId == null || dogId == "null" || dogId.isBlank()) {
-                    Log.d("QuestionnaireViewModel", "Updating user questionnaire status")
-                    updateUserQuestionnaireStatus(userId, true)
-                    _completionStatus.value = true
+                    createInitialDogProfile(userId, finalDogId, responses)
+
+                    // Set this dog as current in DogProfileViewModel
+                    dogProfileViewModel.setCurrentDog(finalDogId)
                 }
 
-                // Update dog profile if needed
-                if (!dogId.isNullOrBlank() && dogId != "null") {
-                    dataManager.saveQuestionnaireResponses(userId, dogId, responses)
-                }
-
+                // Save responses to DataManager with the same dogId
+                dataManager.saveQuestionnaireResponses(userId, finalDogId, responses)
                 _questionnaireResponses.value = responses
+                _completionStatus.value = true
 
-                Log.d("QuestionnaireViewModel", "Successfully saved responses")
-
+                Log.d("QuestionnaireViewModel", "Successfully saved all data for dogId: $finalDogId")
             } catch (e: Exception) {
                 Log.e("QuestionnaireViewModel", "Error saving questionnaire", e)
                 _error.value = "Failed to save questionnaire: ${e.message}"
@@ -92,6 +97,11 @@ class QuestionnaireViewModel @Inject constructor(
                 _isSubmitting.value = false
             }
         }
+    }
+    private fun generateDogId(userId: String): String {
+        val timestamp = System.currentTimeMillis()
+        val random = (1000..9999).random() // 4-digit random number
+        return "DOG_${userId.take(6)}_${timestamp}_$random"
     }
     private suspend fun updateUserQuestionnaireStatus(userId: String, completed: Boolean) {
         try {
@@ -106,6 +116,54 @@ class QuestionnaireViewModel @Inject constructor(
             }
         } catch (e: Exception) {
             Log.e("QuestionnaireViewModel", "Error updating questionnaire status", e)
+            throw e
+        }
+    }
+    private suspend fun createInitialDogProfile(userId: String, dogId: String, responses: Map<String, String>) {
+        try {
+            val dogProfile = Dog(
+                id = dogId,
+                ownerId = userId,
+                name = responses["dogName"] ?: "Unnamed Dog",
+                breed = responses["breed"] ?: "Unknown",
+                age = responses["age"]?.toIntOrNull() ?: 0,
+                gender = responses["gender"] ?: "Unknown",
+                size = responses["size"] ?: "",
+                energyLevel = responses["energyLevel"] ?: "Medium",
+                friendliness = responses["friendliness"] ?: "Medium",
+                profilePictureUrl = null,  // Will be set later when user adds photo
+                isSpayedNeutered = responses["isSpayedNeutered"],
+                friendlyWithDogs = responses["friendlyWithDogs"],
+                friendlyWithChildren = responses["friendlyWithChildren"],
+                specialNeeds = responses["specialNeeds"],
+                favoriteToy = responses["favoriteToy"],
+                preferredActivities = responses["preferredActivities"],
+                walkFrequency = responses["walkFrequency"],
+                favoriteTreat = responses["favoriteTreat"],
+                trainingCertifications = responses["trainingCertifications"],
+                trainability = responses["trainability"],
+                friendlyWithStrangers = responses["friendlyWithStrangers"],
+                exerciseNeeds = responses["exerciseNeeds"],
+                groomingNeeds = responses["groomingNeeds"],
+                weight = responses["weight"]?.toDoubleOrNull(),
+                photoUrls = List(6) { null },  // Initialize with 6 empty photo slots
+                latitude = null,  // Location will be set later
+                longitude = null,
+                achievements = emptyList()  // Initialize with no achievements
+            )
+
+            // Log the profile creation attempt
+            Log.d("QuestionnaireViewModel", "Creating dog profile: " +
+                    "id=$dogId, name=${dogProfile.name}, breed=${dogProfile.breed}")
+
+            // Save the profile
+            dataManager.createOrUpdateDogProfile(dogProfile)
+
+            Log.d("QuestionnaireViewModel", "Successfully created initial dog profile with ID: $dogId")
+
+        } catch (e: Exception) {
+            Log.e("QuestionnaireViewModel", "Error creating initial dog profile: ${e.message}")
+            Log.e("QuestionnaireViewModel", "Stack trace: ${e.stackTraceToString()}")
             throw e
         }
     }
