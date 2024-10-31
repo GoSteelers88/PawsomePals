@@ -11,6 +11,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import kotlin.math.abs
 
 @HiltViewModel
 class SwipingViewModel @Inject constructor(
@@ -20,15 +21,29 @@ class SwipingViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "SwipingViewModel"
+        private const val COMPATIBILITY_THRESHOLD = 0.7
     }
 
-    // UI State
+    // UI States
+    sealed class SwipingUIState {
+        object Initial : SwipingUIState()
+        object Loading : SwipingUIState()
+        object Success : SwipingUIState()
+        object NoMoreProfiles : SwipingUIState()
+        object LocationNeeded : SwipingUIState()
+        data class Error(val message: String) : SwipingUIState()
+        data class Match(val matchedDog: Dog) : SwipingUIState()
+    }
+
+    data class MatchDetail(
+        val dog: Dog,
+        val compatibilityScore: Double,
+        val compatibilityReasons: List<String>
+    )
+
+    // State Flows
     private val _uiState = MutableStateFlow<SwipingUIState>(SwipingUIState.Initial)
     val uiState: StateFlow<SwipingUIState> = _uiState.asStateFlow()
-
-    // Profiles State
-    private val _availableProfiles = MutableStateFlow<List<Dog>>(emptyList())
-    val availableProfiles: StateFlow<List<Dog>> = _availableProfiles.asStateFlow()
 
     private val _currentProfile = MutableStateFlow<Dog?>(null)
     val currentProfile: StateFlow<Dog?> = _currentProfile.asStateFlow()
@@ -36,7 +51,13 @@ class SwipingViewModel @Inject constructor(
     private val _matches = MutableStateFlow<List<Dog>>(emptyList())
     val matches: StateFlow<List<Dog>> = _matches.asStateFlow()
 
-    // Queue of profiles
+    private val _currentMatchDetail = MutableStateFlow<MatchDetail?>(null)
+    val currentMatchDetail: StateFlow<MatchDetail?> = _currentMatchDetail.asStateFlow()
+
+    private val _availableProfiles = MutableStateFlow<List<Dog>>(emptyList())
+    val availableProfiles: StateFlow<List<Dog>> = _availableProfiles.asStateFlow()
+
+    // Profile Queue Management
     private val profileQueue = mutableListOf<Dog>()
     private var currentIndex = 0
 
@@ -44,130 +65,22 @@ class SwipingViewModel @Inject constructor(
         loadInitialData()
     }
 
-    private fun loadInitialData() {
-        viewModelScope.launch {
-            loadSwipingProfiles()
-            loadMatches()
-        }
-    }
-
-    private fun loadSwipingProfiles() {
+    // Public Functions
+    fun onSwipeWithCompatibility(dogId: String, liked: Boolean) {
         viewModelScope.launch {
             try {
                 _uiState.value = SwipingUIState.Loading
-                dogProfileRepository.getSwipingProfiles().fold(
-                    onSuccess = { dogs ->
-                        dogs?.let {
-                            profileQueue.clear()
-                            profileQueue.addAll(it)
-                            _availableProfiles.value = it
-                            showNextProfile()
-                            _uiState.value = SwipingUIState.Success
-                        } ?: run {
-                            _uiState.value = SwipingUIState.Error("No profiles available")
-                        }
-                    },
-                    onFailure = { exception ->
-                        Log.e(TAG, "Failed to load profiles", exception)
-                        _uiState.value = SwipingUIState.Error("Failed to load profiles: ${exception.message}")
-                    }
-                )
+
+                if (liked) {
+                    handleLike(dogId)
+                } else {
+                    handleDislike(dogId)
+                }
+
+                showNextProfile()
             } catch (e: Exception) {
-                Log.e(TAG, "Error in loadSwipingProfiles", e)
-                _uiState.value = SwipingUIState.Error("Unexpected error loading profiles")
+                _uiState.value = SwipingUIState.Error("Failed to process swipe")
             }
-        }
-    }
-
-    fun onSwipe(liked: Boolean) {
-        viewModelScope.launch {
-            _currentProfile.value?.let { profile ->
-                handleSwipe(profile.id, liked)
-            }
-        }
-    }
-
-    private fun loadMatches() {
-        viewModelScope.launch {
-            try {
-                matchRepository.getRecentMatches().collect { matchedDogs ->
-                    _matches.value = matchedDogs
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error loading matches", e)
-                _uiState.value = SwipingUIState.Error("Failed to load matches")
-            }
-        }
-    }
-
-    fun onSwipeLeft(dogId: String) {
-        viewModelScope.launch {
-            handleSwipe(dogId, liked = false)
-        }
-    }
-
-    fun onSwipeRight(dogId: String) {
-        viewModelScope.launch {
-            handleSwipe(dogId, liked = true)
-        }
-    }
-
-    private suspend fun handleSwipe(dogId: String, liked: Boolean) {
-        try {
-            _uiState.value = SwipingUIState.Loading
-
-            val result = if (liked) {
-                matchRepository.addLike(dogId)
-            } else {
-                matchRepository.addDislike(dogId)
-            }
-
-            when (result) {
-                is ResultWrapper.Success<Unit> -> {
-                    if (liked) {
-                        checkForMatch(dogId)
-                    }
-                    showNextProfile()
-                    _uiState.value = SwipingUIState.Success
-                }
-                is ResultWrapper.Error -> {
-                    _uiState.value = SwipingUIState.Error("Failed to process swipe: ${result.exception.message}")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in handleSwipe", e)
-            _uiState.value = SwipingUIState.Error("Unexpected error processing swipe")
-        }
-    }
-
-    private suspend fun checkForMatch(dogId: String) {
-        try {
-            when (val result = matchRepository.isMatch(dogId)) {
-                is ResultWrapper.Success<Boolean> -> {
-                    if (result.data) {
-                        dogProfileRepository.getDogProfile(dogId).collect { dog ->
-                            dog?.let {
-                                _matches.value = _matches.value + it
-                                _uiState.value = SwipingUIState.Match(it)
-                            }
-                        }
-                    }
-                }
-                is ResultWrapper.Error -> {
-                    Log.e(TAG, "Error checking match", result.exception)
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in checkForMatch", e)
-        }
-    }
-
-    private fun showNextProfile() {
-        if (currentIndex < profileQueue.size) {
-            _currentProfile.value = profileQueue[currentIndex++]
-        } else {
-            _currentProfile.value = null
-            _uiState.value = SwipingUIState.NoMoreProfiles
         }
     }
 
@@ -192,17 +105,142 @@ class SwipingViewModel @Inject constructor(
         }
     }
 
-    sealed class SwipingUIState {
-        object Initial : SwipingUIState()
-        object Loading : SwipingUIState()
-        object Success : SwipingUIState()
-        object NoMoreProfiles : SwipingUIState()
-        data class Error(val message: String) : SwipingUIState()
-        data class Match(val matchedDog: Dog) : SwipingUIState()
+    // Private Helper Functions
+    private fun loadInitialData() {
+        viewModelScope.launch {
+            loadSwipingProfiles()
+            loadMatches()
+        }
     }
 
-    override fun onCleared() {
-        super.onCleared()
-        // Clean up any resources if needed
+    private suspend fun handleLike(dogId: String) {
+        when (val result = matchRepository.getCompatibilityScore(dogId)) {
+            is ResultWrapper.Success -> {
+                val score = result.data
+                if (score >= COMPATIBILITY_THRESHOLD) {
+                    processLike(dogId, score)
+                } else {
+                    _uiState.value = SwipingUIState.Error("Not compatible enough for a match")
+                }
+            }
+            is ResultWrapper.Error -> {
+                _uiState.value = SwipingUIState.Error("Failed to check compatibility")
+            }
+        }
+    }
+
+    private suspend fun handleDislike(dogId: String) {
+        matchRepository.addDislike(dogId)
+        _uiState.value = SwipingUIState.Success
+    }
+
+    private suspend fun processLike(dogId: String, compatibilityScore: Double) {
+        when (val likeResult = matchRepository.addLike(dogId)) {
+            is ResultWrapper.Success -> {
+                checkForMatch(dogId, compatibilityScore)
+            }
+            is ResultWrapper.Error -> {
+                _uiState.value = SwipingUIState.Error("Failed to process like")
+            }
+        }
+    }
+
+    private suspend fun checkForMatch(dogId: String, compatibilityScore: Double) {
+        when (val matchResult = matchRepository.isMatch(dogId)) {
+            is ResultWrapper.Success -> {
+                if (matchResult.data) {
+                    createMatch(dogId, compatibilityScore)
+                } else {
+                    _uiState.value = SwipingUIState.Success
+                }
+            }
+            is ResultWrapper.Error -> {
+                _uiState.value = SwipingUIState.Error("Failed to check match status")
+            }
+        }
+    }
+
+    private suspend fun createMatch(dogId: String, compatibilityScore: Double) {
+        dogProfileRepository.getDogProfile(dogId).collect { dogResult ->
+            dogResult.fold(
+                onSuccess = { matchedDog ->
+                    matchedDog?.let {
+                        _currentMatchDetail.value = MatchDetail(
+                            dog = it,
+                            compatibilityScore = compatibilityScore,
+                            compatibilityReasons = getCompatibilityReasons(it)
+                        )
+                        _matches.value = _matches.value + it
+                        _uiState.value = SwipingUIState.Match(it)
+                    }
+                },
+                onFailure = { e ->
+                    _uiState.value = SwipingUIState.Error("Failed to load match details")
+                }
+            )
+        }
+    }
+
+    private fun getCompatibilityReasons(matchedDog: Dog): List<String> {
+        val reasons = mutableListOf<String>()
+        currentProfile.value?.let { currentDog ->
+            if (currentDog.size == matchedDog.size) {
+                reasons.add("Same size")
+            }
+            if (currentDog.energyLevel == matchedDog.energyLevel) {
+                reasons.add("Matching energy levels")
+            }
+            if (abs((currentDog.age ?: 0) - (matchedDog.age ?: 0)) <= 2) {
+                reasons.add("Similar age")
+            }
+        }
+        return reasons
+    }
+
+    private fun showNextProfile() {
+        if (currentIndex < profileQueue.size) {
+            _currentProfile.value = profileQueue[currentIndex++]
+        } else {
+            _currentProfile.value = null
+            _uiState.value = SwipingUIState.NoMoreProfiles
+        }
+    }
+
+    private fun loadSwipingProfiles() {
+        viewModelScope.launch {
+            try {
+                _uiState.value = SwipingUIState.Loading
+                val result = dogProfileRepository.getSwipingProfiles()
+                result.fold(
+                    onSuccess = { dogs ->
+                        profileQueue.clear()
+                        profileQueue.addAll(dogs)
+                        _availableProfiles.value = dogs
+                        showNextProfile()
+                        _uiState.value = SwipingUIState.Success
+                    },
+                    onFailure = { exception ->
+                        Log.e(TAG, "Failed to load profiles", exception)
+                        _uiState.value = SwipingUIState.Error("Failed to load profiles: ${exception.message}")
+                    }
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in loadSwipingProfiles", e)
+                _uiState.value = SwipingUIState.Error("Unexpected error loading profiles")
+            }
+        }
+    }
+
+    private fun loadMatches() {
+        viewModelScope.launch {
+            try {
+                matchRepository.getUserMatches().collect { matchedDogs ->
+                    _matches.value = matchedDogs
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading matches", e)
+                _uiState.value = SwipingUIState.Error("Failed to load matches")
+            }
+        }
     }
 }

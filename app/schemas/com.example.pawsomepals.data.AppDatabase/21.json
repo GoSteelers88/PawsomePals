@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 21,
-    "identityHash": "661b7afb0b4f368154a4cd8f216d184e",
+    "identityHash": "dc5049bf0d09112e3a825cbcf74b35cf",
     "entities": [
       {
         "tableName": "users",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `username` TEXT NOT NULL, `email` TEXT NOT NULL, `password` TEXT NOT NULL, `petName` TEXT, `firstName` TEXT, `lastName` TEXT, `bio` TEXT, `profilePictureUrl` TEXT, `hasAcceptedTerms` INTEGER NOT NULL, `hasCompletedQuestionnaire` INTEGER NOT NULL, `questionnaireAnswers` TEXT, `latitude` REAL, `longitude` REAL, `lastLoginTime` INTEGER NOT NULL, `hasSubscription` INTEGER NOT NULL, `subscriptionEndDate` INTEGER, `dailyQuestionCount` INTEGER NOT NULL, `phoneNumber` TEXT, `preferredContact` TEXT, `notificationsEnabled` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `username` TEXT NOT NULL, `email` TEXT NOT NULL, `password` TEXT NOT NULL, `petName` TEXT, `firstName` TEXT, `lastName` TEXT, `bio` TEXT, `profilePictureUrl` TEXT, `photoUrl` TEXT, `uid` TEXT, `displayName` TEXT, `hasAcceptedTerms` INTEGER NOT NULL, `hasCompletedQuestionnaire` INTEGER NOT NULL, `questionnaireAnswers` TEXT, `latitude` REAL, `longitude` REAL, `lastLoginTime` INTEGER NOT NULL, `hasSubscription` INTEGER NOT NULL, `subscriptionEndDate` INTEGER, `dailyQuestionCount` INTEGER NOT NULL, `phoneNumber` TEXT, `preferredContact` TEXT, `notificationsEnabled` INTEGER NOT NULL, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -59,6 +59,24 @@
           {
             "fieldPath": "profilePictureUrl",
             "columnName": "profilePictureUrl",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "photoUrl",
+            "columnName": "photoUrl",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "displayName",
             "affinity": "TEXT",
             "notNull": false
           },
@@ -882,7 +900,7 @@
     "views": [],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '661b7afb0b4f368154a4cd8f216d184e')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'dc5049bf0d09112e3a825cbcf74b35cf')"
     ]
   }
 }

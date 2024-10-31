@@ -28,9 +28,15 @@ import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 import com.example.pawsomepals.auth.GoogleAuthManager
 import com.example.pawsomepals.data.DataManager
+import com.example.pawsomepals.data.model.Dog
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.withContext
+import java.util.UUID
 
 @HiltViewModel
 
@@ -51,6 +57,9 @@ class AuthViewModel @Inject constructor(
     }
 
     private val auth: FirebaseAuth = FirebaseAuth.getInstance()
+
+    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
+
 
     private val _currentUser = MutableStateFlow<User?>(null)
     val currentUser: StateFlow<User?> = _currentUser.asStateFlow()
@@ -79,40 +88,81 @@ class AuthViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
+            Log.d("AuthViewModel", "Initializing AuthViewModel")
 
+            // First check initial auth state
+            auth.currentUser?.let { initialUser ->
+                Log.d("AuthViewModel", "Found initial user: ${initialUser.uid}")
+                handleAuthStateChange(initialUser)
+            }
+
+            // Set up auth state listener
             auth.addAuthStateListener { firebaseAuth ->
                 val user = firebaseAuth.currentUser
                 Log.d("AuthViewModel", "Auth state changed. User: ${user?.uid}")
-                if (user != null) {
-                    viewModelScope.launch {
-                        try {
-                            _isLoading.value = true
-                            val dbUser = userRepository.getUserByEmail(user.email ?: "")
-                            if (dbUser != null) {
-                                _currentUser.value = dbUser
-                                _authState.value = AuthState.Authenticated
-                            } else {
-                                // User exists in Firebase but not in Firestore
-                                _authState.value = AuthState.Unauthenticated
-                                auth.signOut() // Sign out the user
-                            }
-                        } catch (e: Exception) {
-                            Log.e("AuthViewModel", "Error fetching user data: ${e.message}")
-                            _errorMessage.value = "Failed to load user data"
-                            _authState.value = AuthState.Unauthenticated
-                        } finally {
-                            _isLoading.value = false
-                            _isUserFullyLoaded.value = true
-                        }
+
+                viewModelScope.launch {
+                    if (user != null) {
+                        handleAuthStateChange(user)
+                    } else {
+                        handleSignOut()
                     }
-                } else {
-                    _currentUser.value = null
-                    _authState.value = AuthState.Unauthenticated
-                    _isUserFullyLoaded.value = true
-                    _isLoading.value = false
                 }
             }
         }
+    }
+
+    private suspend fun handleAuthStateChange(user: FirebaseUser) {
+        try {
+            _isLoading.value = true
+            Log.d("AuthViewModel", "Handling auth state change for user: ${user.uid}")
+
+            // Give Firestore a moment to complete the write if it's a new user
+            delay(500)
+
+            val dbUser = userRepository.getUserByEmail(user.email ?: "")
+            if (dbUser != null) {
+                Log.d("AuthViewModel", "Found user in database: ${dbUser.id}")
+                _currentUser.value = dbUser
+                _authState.value = AuthViewModel.AuthState.Authenticated
+            } else {
+                // Try one more time after a longer delay
+                delay(1000)
+                val retryUser = userRepository.getUserByEmail(user.email ?: "")
+                if (retryUser != null) {
+                    _currentUser.value = retryUser
+                    _authState.value = AuthViewModel.AuthState.Authenticated
+                } else {
+                    Log.e("AuthViewModel", "User data not found after retry")
+                    handleInvalidUser("User data not found")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("AuthViewModel", "Error handling auth state change", e)
+            handleInvalidUser(e.message ?: "Unknown error occurred")
+        } finally {
+            _isLoading.value = false
+        }
+    }
+    private suspend fun handleInvalidUser(reason: String) {
+        Log.d("AuthViewModel", "Handling invalid user: $reason")
+        _authState.value = AuthState.Unauthenticated
+        _currentUser.value = null
+
+        try {
+            auth.signOut()
+            Log.d("AuthViewModel", "User signed out due to: $reason")
+        } catch (e: Exception) {
+            Log.e("AuthViewModel", "Error signing out user", e)
+        }
+    }
+
+    private fun handleSignOut() {
+        Log.d("AuthViewModel", "Handling sign out")
+        _currentUser.value = null
+        _authState.value = AuthState.Unauthenticated
+        _isUserFullyLoaded.value = true
+        _isLoading.value = false
     }
     fun getCurrentUserId(): String? {
         return currentUser.value?.id
@@ -134,7 +184,7 @@ class AuthViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 _isLoading.value = true
-                dataManager.syncWithFirebase()
+                dataManager.syncWithFirestore()
                 _isLoading.value = false
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to sync user data: ${e.message}"
@@ -174,34 +224,75 @@ class AuthViewModel @Inject constructor(
 
     fun registerUser(username: String, email: String, password: String, petName: String?) {
         viewModelScope.launch {
-            _isLoading.value = true
-            _errorMessage.value = null
             try {
-                val recaptchaVerified = recaptchaManager.executeRecaptcha("register")
-                if (recaptchaVerified) {
-                    val authResult = auth.createUserWithEmailAndPassword(email, password).await()
-                    authResult.user?.let { firebaseUser ->
-                        val user = createOrUpdateLocalUser(firebaseUser)
-                        user.username = username
-                        user.petName = petName
-                        user.hasAcceptedTerms = false
-                        user.hasCompletedQuestionnaire = false
-                        userRepository.updateUser(user)
-                        _currentUser.value = user
-                    } ?: run {
-                        _errorMessage.value = "Failed to create user"
-                    }
-                } else {
-                    _errorMessage.value = "reCAPTCHA verification failed"
+                _isLoading.value = true
+                _errorMessage.value = null
+
+                // Create Firebase Auth user first
+                val authResult = auth.createUserWithEmailAndPassword(email, password).await()
+                val firebaseUser = authResult.user ?: throw IllegalStateException("Failed to create user")
+
+                // Create User object with empty dogIds
+                val newUser = User(
+                    id = firebaseUser.uid,
+                    username = username,
+                    email = email,
+                    password = "",
+                    dogIds = emptyList(),
+                    hasAcceptedTerms = false,
+                    hasCompletedQuestionnaire = false,
+                    lastLoginTime = System.currentTimeMillis()
+                )
+
+                // Save user to Firestore and local DB
+                userRepository.insertUser(newUser)
+
+                // If petName is provided, create initial dog
+                if (!petName.isNullOrBlank()) {
+                    val dogId = UUID.randomUUID().toString()
+                    val dog = Dog(
+                        id = dogId,
+                        ownerId = firebaseUser.uid,
+                        name = petName
+                    )
+                    userRepository.insertDog(dog)
+
+                    // Update user with dogId
+                    val updatedUser = newUser.copy(dogIds = listOf(dogId))
+                    userRepository.updateUser(updatedUser)
                 }
+
+                _currentUser.value = newUser
+                _authState.value = AuthState.Authenticated
+
             } catch (e: Exception) {
-                _errorMessage.value = "Registration failed: ${e.message}"
+                handleRegistrationError(e)
             } finally {
                 _isLoading.value = false
             }
         }
     }
+    private fun handleRegistrationError(e: Exception) {
+        Log.e("AuthViewModel", "Registration error", e)
+        _errorMessage.value = when {
+            e.message?.contains("email already in use", ignoreCase = true) == true ->
+                "This email is already registered. Please try logging in instead."
+            e.message?.contains("weak password", ignoreCase = true) == true ->
+                "Password is too weak. Please use at least 6 characters."
+            e.message?.contains("invalid email", ignoreCase = true) == true ->
+                "Please enter a valid email address."
+            else -> "Registration failed: ${e.message}"
+        }
 
+        // Clean up any partial registration
+        viewModelScope.launch {
+            try {
+                auth.currentUser?.delete()?.await()
+            } catch (cleanupError: Exception) {
+                Log.e("AuthViewModel", "Error cleaning up failed registration", cleanupError)
+            }
+        }
+    }
     fun beginGoogleSignIn() {
         viewModelScope.launch {
             _isLoading.value = true
@@ -323,10 +414,24 @@ class AuthViewModel @Inject constructor(
     fun logOut() {
         viewModelScope.launch {
             try {
+                // First stop any ongoing operations
+                dataManager.cleanup()
+
+                // Clear local data
+                withContext(Dispatchers.IO) {
+                    dataManager.clearAllLocalData()
+                }
+
+                // Sign out from Google if used
                 googleAuthManager.signOut()
-                dataManager.clearAllLocalData()
+
+                // Update states
                 _currentUser.value = null
-                _authState.value = AuthState.Unauthenticated
+                _authState.value = AuthViewModel.AuthState.Unauthenticated
+
+                // Finally, sign out from Firebase
+                auth.signOut()
+
                 Log.d("AuthViewModel", "User logged out successfully")
             } catch (e: Exception) {
                 _errorMessage.value = "Failed to log out: ${e.message}"
@@ -346,11 +451,13 @@ class AuthViewModel @Inject constructor(
                 id = firebaseUser.uid,
                 username = firebaseUser.displayName ?: "",
                 email = firebaseUser.email ?: "",
-                password = "", // We don't store the password locally
+                password = "",
+                dogIds = emptyList(),  // Initialize empty dog list
                 hasAcceptedTerms = false,
                 hasCompletedQuestionnaire = false
             ).also { userRepository.insertUser(it) }
     }
+
 
     private suspend fun handleFirebaseUser(firebaseUser: FirebaseUser) {
         try {

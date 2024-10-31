@@ -5,25 +5,29 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.pawsomepals.data.DataManager
 import com.example.pawsomepals.data.model.Dog
-import com.example.pawsomepals.data.model.QuestionnaireResponse
+import com.example.pawsomepals.data.repository.DogProfileRepository
 import com.example.pawsomepals.data.repository.QuestionRepository
 import com.example.pawsomepals.data.repository.UserRepository
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import java.util.UUID
 
 @HiltViewModel
 class QuestionnaireViewModel @Inject constructor(
-    private val questionRepository: QuestionRepository,
-    private val dataManager: DataManager,
     private val userRepository: UserRepository,
+    private val dogProfileRepository: DogProfileRepository,
     private val auth: FirebaseAuth,
-    private val dogProfileViewModel: DogProfileViewModel
-
+    private val dogProfileViewModel: DogProfileViewModel,
+    private val firestore: FirebaseFirestore
 ) : ViewModel() {
 
     private val _questionnaireResponses = MutableStateFlow<Map<String, String>>(emptyMap())
@@ -38,11 +42,41 @@ class QuestionnaireViewModel @Inject constructor(
     private val _completionStatus = MutableStateFlow(false)
     val completionStatus: StateFlow<Boolean> = _completionStatus
 
+    private val _isAuthenticated = MutableStateFlow(false)
+    // Helper functions to parse and map values
+    private fun parseAge(ageRange: String?): Int {
+        return when (ageRange) {
+            "1-3 years" -> 2
+            "4-7 years" -> 5
+            "8+ years" -> 8
+            else -> 0
+        }
+    }
+
+    private fun parseWeight(weight: String?): Double? {
+        return weight?.toDoubleOrNull()
+    }
+
+    private fun mapEnergyLevel(level: String?): String {
+        return when (level?.lowercase()) {
+            "low" -> "Low"
+            "high" -> "High"
+            else -> "Medium"
+        }
+    }
+
+    private fun mapFriendliness(level: String?): String {
+        return when (level?.lowercase()) {
+            "friendly" -> "Friendly"
+            "shy" -> "Shy"
+            else -> "Moderate"
+        }
+    }
+
     init {
         viewModelScope.launch {
-            // Check if there's an authenticated user
-            auth.currentUser?.let { user ->
-                checkQuestionnaireStatus(user.uid)
+            auth.addAuthStateListener { firebaseAuth ->
+                _isAuthenticated.value = firebaseAuth.currentUser != null
             }
         }
     }
@@ -61,112 +95,188 @@ class QuestionnaireViewModel @Inject constructor(
                 _isSubmitting.value = true
                 _error.value = null
 
-                // Generate or use existing dogId
+                // Verify user exists in Firestore
+                val userDoc = firestore.collection("users")
+                    .document(userId)
+                    .get()
+                    .await()
+
+                if (!userDoc.exists()) {
+                    _error.value = "User profile not found. Please try again."
+                    return@launch
+                }
+
+                // Generate new dogId or use existing one
                 val finalDogId = dogId?.takeIf { it.isNotBlank() && it != "null" }
                     ?: generateDogId(userId)
 
-                Log.d("QuestionnaireViewModel", "Saving responses for dogId: $finalDogId")
+                Log.d("QuestionnaireViewModel", "Processing dog profile: $finalDogId")
 
-                // Save to repository
-                val questionnaireResponse = QuestionnaireResponse(
-                    id = UUID.randomUUID().toString(),
-                    userId = userId,
-                    dogId = finalDogId,
-                    responses = responses
-                )
-                questionRepository.saveQuestionnaireResponse(questionnaireResponse)
+                withContext(Dispatchers.IO) {
+                    try {
+                        // Create or update dog profile
+                        val dog = Dog(
+                            id = finalDogId,
+                            ownerId = userId,
+                            name = responses["dog_name"] ?: "Unnamed Dog",
+                            breed = responses["dog_breed"] ?: "Unknown",
+                            age = parseAge(responses["dog_age"]),
+                            gender = responses["dog_gender"] ?: "Unknown",
+                            size = responses["dog_size"] ?: "",
+                            energyLevel = mapEnergyLevel(responses["dog_energy"]),
+                            friendliness = mapFriendliness(responses["dog_friendliness"]),
+                            isSpayedNeutered = responses["dog_neutered"],
+                            friendlyWithDogs = responses["dog_friendly_dogs"],
+                            friendlyWithChildren = responses["dog_friendly_children"],
+                            friendlyWithStrangers = responses["dog_friendly_strangers"],
+                            specialNeeds = responses["dog_special_needs"],
+                            favoriteToy = responses["dog_favorite_toy"],
+                            preferredActivities = responses["dog_preferred_activities"],
+                            walkFrequency = responses["dog_walk_frequency"],
+                            favoriteTreat = responses["dog_favorite_treat"],
+                            trainingCertifications = responses["dog_training_certifications"],
+                            trainability = responses["dog_trainability"],
+                            exerciseNeeds = responses["dog_exercise_needs"],
+                            groomingNeeds = responses["dog_grooming_needs"],
+                            weight = parseWeight(responses["dog_weight"]),
+                            photoUrls = List(6) { null }
+                        )
 
-                // Create initial dog profile with the same dogId
-                if (dogId == null || dogId == "null" || dogId.isBlank()) {
-                    createInitialDogProfile(userId, finalDogId, responses)
 
-                    // Set this dog as current in DogProfileViewModel
-                    dogProfileViewModel.setCurrentDog(finalDogId)
+
+// Add logging to debug the responses and created dog
+                        Log.d("QuestionnaireViewModel", "Questionnaire Responses: $responses")
+                        Log.d("QuestionnaireViewModel", "Created Dog Object: $dog")
+
+                        // Save dog profile
+                        dogProfileRepository.createOrUpdateDogProfile(dog)
+
+                        // If this is a new dog, update user's dog list and questionnaire status
+                        if (dogId == null || dogId.isBlank() || dogId == "null") {
+                            // Update user's dog IDs list
+                            val currentUser = userRepository.getUserById(userId)
+                            currentUser?.let { user ->
+                                val updatedUser = user.copy(
+                                    hasCompletedQuestionnaire = true,
+                                    dogIds = user.dogIds + finalDogId
+                                )
+                                userRepository.updateUser(updatedUser)
+                            }
+
+                            // Set as current dog in UI
+                            withContext(Dispatchers.Main) {
+                                dogProfileViewModel.setCurrentDog(finalDogId)
+                            }
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            _questionnaireResponses.value = responses
+                            _completionStatus.value = true
+                        }
+
+                        Log.d("QuestionnaireViewModel", "Successfully saved dog profile: $finalDogId")
+
+                    } catch (e: Exception) {
+                        Log.e("QuestionnaireViewModel", "Error saving dog profile", e)
+                        throw e
+                    }
                 }
-
-                // Save responses to DataManager with the same dogId
-                dataManager.saveQuestionnaireResponses(userId, finalDogId, responses)
-                _questionnaireResponses.value = responses
-                _completionStatus.value = true
-
-                Log.d("QuestionnaireViewModel", "Successfully saved all data for dogId: $finalDogId")
             } catch (e: Exception) {
-                Log.e("QuestionnaireViewModel", "Error saving questionnaire", e)
-                _error.value = "Failed to save questionnaire: ${e.message}"
+                Log.e("QuestionnaireViewModel", "Error in questionnaire processing", e)
+                _error.value = when {
+                    e.message?.contains("permission-denied", ignoreCase = true) == true ->
+                        "Permission denied. Please try again."
+                    e.message?.contains("network", ignoreCase = true) == true ->
+                        "Network error. Please check your connection."
+                    else -> "Failed to save questionnaire: ${e.message}"
+                }
             } finally {
                 _isSubmitting.value = false
             }
         }
     }
+
     private fun generateDogId(userId: String): String {
         val timestamp = System.currentTimeMillis()
-        val random = (1000..9999).random() // 4-digit random number
+        val random = (1000..9999).random()
         return "DOG_${userId.take(6)}_${timestamp}_$random"
     }
+
     private suspend fun updateUserQuestionnaireStatus(userId: String, completed: Boolean) {
         try {
-            // Update in Firestore
-            val user = userRepository.getUserById(userId)
-            user?.let {
+            firestore.collection("users")
+                .document(userId)
+                .update("hasCompletedQuestionnaire", completed)
+                .await()
+
+            userRepository.getUserById(userId)?.let {
                 val updatedUser = it.copy(hasCompletedQuestionnaire = completed)
                 userRepository.updateUser(updatedUser)
-
-                // Also update the local completion status
-                _completionStatus.value = completed
             }
+
+            _completionStatus.value = completed
+            Log.d("QuestionnaireViewModel", "Successfully updated questionnaire status: $completed")
         } catch (e: Exception) {
             Log.e("QuestionnaireViewModel", "Error updating questionnaire status", e)
-            throw e
+            _error.value = "Warning: Status update failed, but your responses were saved."
         }
     }
-    private suspend fun createInitialDogProfile(userId: String, dogId: String, responses: Map<String, String>) {
-        try {
-            val dogProfile = Dog(
-                id = dogId,
-                ownerId = userId,
-                name = responses["dogName"] ?: "Unnamed Dog",
-                breed = responses["breed"] ?: "Unknown",
-                age = responses["age"]?.toIntOrNull() ?: 0,
-                gender = responses["gender"] ?: "Unknown",
-                size = responses["size"] ?: "",
-                energyLevel = responses["energyLevel"] ?: "Medium",
-                friendliness = responses["friendliness"] ?: "Medium",
-                profilePictureUrl = null,  // Will be set later when user adds photo
-                isSpayedNeutered = responses["isSpayedNeutered"],
-                friendlyWithDogs = responses["friendlyWithDogs"],
-                friendlyWithChildren = responses["friendlyWithChildren"],
-                specialNeeds = responses["specialNeeds"],
-                favoriteToy = responses["favoriteToy"],
-                preferredActivities = responses["preferredActivities"],
-                walkFrequency = responses["walkFrequency"],
-                favoriteTreat = responses["favoriteTreat"],
-                trainingCertifications = responses["trainingCertifications"],
-                trainability = responses["trainability"],
-                friendlyWithStrangers = responses["friendlyWithStrangers"],
-                exerciseNeeds = responses["exerciseNeeds"],
-                groomingNeeds = responses["groomingNeeds"],
-                weight = responses["weight"]?.toDoubleOrNull(),
-                photoUrls = List(6) { null },  // Initialize with 6 empty photo slots
-                latitude = null,  // Location will be set later
-                longitude = null,
-                achievements = emptyList()  // Initialize with no achievements
-            )
+    // In QuestionnaireViewModel.kt
+    fun loadExistingDogProfile(dogId: String) {
+        viewModelScope.launch {
+            try {
+                _isSubmitting.value = true
+                _error.value = null
 
-            // Log the profile creation attempt
-            Log.d("QuestionnaireViewModel", "Creating dog profile: " +
-                    "id=$dogId, name=${dogProfile.name}, breed=${dogProfile.breed}")
+                // Fetch dog profile
+                val dog = dogProfileRepository.getDogProfileById(dogId)
+                    ?.getOrNull()
+                    ?: throw IllegalStateException("Dog profile not found")
 
-            // Save the profile
-            dataManager.createOrUpdateDogProfile(dogProfile)
+                // Convert dog profile to questionnaire answers
+                val responses = mapOf(
+                    "dogName" to (dog.name ?: ""),
+                    "breed" to (dog.breed ?: ""),
+                    "age" to (dog.age?.toString() ?: ""),
+                    "gender" to (dog.gender ?: ""),
+                    "size" to (dog.size ?: ""),
+                    "energyLevel" to (dog.energyLevel ?: "Medium"),
+                    "friendliness" to (dog.friendliness ?: "Medium"),
+                    "isSpayedNeutered" to (dog.isSpayedNeutered ?: ""),
+                    "friendlyWithDogs" to (dog.friendlyWithDogs ?: ""),
+                    "friendlyWithChildren" to (dog.friendlyWithChildren ?: ""),
+                    "specialNeeds" to (dog.specialNeeds ?: ""),
+                    "favoriteToy" to (dog.favoriteToy ?: ""),
+                    "preferredActivities" to (dog.preferredActivities ?: ""),
+                    "walkFrequency" to (dog.walkFrequency ?: ""),
+                    "favoriteTreat" to (dog.favoriteTreat ?: ""),
+                    "trainingCertifications" to (dog.trainingCertifications ?: ""),
+                    "trainability" to (dog.trainability ?: ""),
+                    "friendlyWithStrangers" to (dog.friendlyWithStrangers ?: ""),
+                    "exerciseNeeds" to (dog.exerciseNeeds ?: ""),
+                    "groomingNeeds" to (dog.groomingNeeds ?: ""),
+                    "weight" to (dog.weight?.toString() ?: "")
+                ).filterValues { it.isNotBlank() }
 
-            Log.d("QuestionnaireViewModel", "Successfully created initial dog profile with ID: $dogId")
+                _questionnaireResponses.value = responses
+                Log.d("QuestionnaireViewModel", "Loaded existing dog profile: $dogId")
 
-        } catch (e: Exception) {
-            Log.e("QuestionnaireViewModel", "Error creating initial dog profile: ${e.message}")
-            Log.e("QuestionnaireViewModel", "Stack trace: ${e.stackTraceToString()}")
-            throw e
+            } catch (e: Exception) {
+                Log.e("QuestionnaireViewModel", "Error loading dog profile", e)
+                _error.value = when {
+                    e.message?.contains("not found", ignoreCase = true) == true ->
+                        "Dog profile not found. Please try again."
+                    e.message?.contains("permission", ignoreCase = true) == true ->
+                        "You don't have permission to view this profile."
+                    else -> "Failed to load dog profile: ${e.message}"
+                }
+            } finally {
+                _isSubmitting.value = false
+            }
         }
     }
+
+
     fun checkQuestionnaireStatus(userId: String) {
         viewModelScope.launch {
             try {
@@ -175,28 +285,6 @@ class QuestionnaireViewModel @Inject constructor(
             } catch (e: Exception) {
                 Log.e("QuestionnaireViewModel", "Error checking questionnaire status", e)
             }
-        }
-    }
-    fun loadQuestionnaireResponses(userId: String, dogId: String) {
-        viewModelScope.launch {
-            try {
-                val responses = questionRepository.getQuestionnaireResponse(userId, dogId)?.responses ?: emptyMap()
-                _questionnaireResponses.value = responses
-            } catch (e: Exception) {
-                _error.value = "Failed to load responses: ${e.message}"
-            }
-        }
-    }
-
-    suspend fun loadExistingAnswers(userId: String, dogId: String): Map<String, String> {
-        return try {
-            // Try to load from DataManager first (as it includes the merged data)
-            dataManager.getQuestionnaireResponses(userId, dogId)
-                ?: questionRepository.getQuestionnaireResponse(userId, dogId)?.responses
-                ?: emptyMap()
-        } catch (e: Exception) {
-            _error.value = "Failed to load existing answers: ${e.message}"
-            emptyMap()
         }
     }
 }

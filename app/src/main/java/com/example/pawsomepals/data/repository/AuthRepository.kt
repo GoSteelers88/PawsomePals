@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.IntentSender
 import android.util.Log
 import com.example.pawsomepals.R
+import com.example.pawsomepals.data.model.User
 import com.example.pawsomepals.utils.RecaptchaManager
 import com.example.pawsomepals.utils.retryWithExponentialBackoff
 import com.google.android.gms.auth.api.identity.BeginSignInRequest
@@ -53,8 +54,59 @@ class AuthRepository @Inject constructor(
             }
         }
     }
+    suspend fun createUserInFirestore(email: String, password: String, username: String, petName: String?): Result<FirebaseUser> {
+        return withContext(Dispatchers.IO) {
+            try {
+                Log.d("AuthRepository", "Starting user creation process for: $email")
 
+                // 1. Create Firebase Auth user
+                val authResult = auth.createUserWithEmailAndPassword(email, password).await()
+                val firebaseUser = authResult.user ?: throw IllegalStateException("Failed to create user")
 
+                // 2. Create complete User object
+                val user = User(
+                    id = firebaseUser.uid,
+                    username = username,
+                    email = email,
+                    password = "", // Don't store actual password
+                    firstName = null,
+                    lastName = null,
+                    bio = null,
+                    profilePictureUrl = null,
+                    dogIds = emptyList(), // Add this line for the new dogIds field
+                    hasAcceptedTerms = false,
+                    hasCompletedQuestionnaire = false,
+                    latitude = null,
+                    longitude = null,
+                    lastLoginTime = System.currentTimeMillis(),
+                    hasSubscription = false,
+                    subscriptionEndDate = null,
+                    dailyQuestionCount = 0,
+                    phoneNumber = null,
+                    preferredContact = null,
+                    notificationsEnabled = true
+                )
+
+                // 3. Save to Firestore
+                firestore.collection("users")
+                    .document(firebaseUser.uid)
+                    .set(user)
+                    .await()
+
+                Log.d("AuthRepository", "User created successfully in both Auth and Firestore")
+                Result.success(firebaseUser)
+            } catch (e: Exception) {
+                Log.e("AuthRepository", "Error creating user", e)
+                // Clean up if Firestore save fails
+                try {
+                    auth.currentUser?.delete()?.await()
+                } catch (e: Exception) {
+                    Log.e("AuthRepository", "Error cleaning up auth user", e)
+                }
+                Result.failure(e)
+            }
+        }
+    }
     suspend fun handleSignInResult(data: android.content.Intent): Result<FirebaseUser> {
         return withContext(Dispatchers.IO) {
             try {

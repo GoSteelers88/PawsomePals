@@ -43,91 +43,73 @@ import com.example.pawsomepals.viewmodel.ProfileViewModel
 
 @Composable
 fun DogProfileTab(
-    viewModel: ProfileViewModel,  // Change this to DogProfileViewModel
-    dogProfileViewModel: DogProfileViewModel,  // Add this
+    viewModel: ProfileViewModel,
+    dogProfileViewModel: DogProfileViewModel,
     cameraLauncher: ManagedActivityResultLauncher<Uri, Boolean>,
     galleryLauncher: ManagedActivityResultLauncher<String, Uri?>,
     onNavigateToAddDog: () -> Unit
 ) {
+    // Add state for selected dog ID
+    var selectedDogId by remember { mutableStateOf<String?>(null) }
     val userDogs by dogProfileViewModel.userDogs.collectAsStateWithLifecycle()
-    val currentDog by dogProfileViewModel.currentDog.collectAsStateWithLifecycle()
 
-    LaunchedEffect(Unit) {
-        dogProfileViewModel.loadUserDogs()
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        if (userDogs.isNotEmpty()) {
-            Text("Your Dogs", style = MaterialTheme.typography.headlineSmall)
-            Spacer(modifier = Modifier.height(16.dp))
-            DogProfileList(
-                dogs = userDogs,
-                viewModel = viewModel,
-                cameraLauncher = cameraLauncher,
-                galleryLauncher = galleryLauncher,
-                onNavigateToAddDog = onNavigateToAddDog
-            )
-        } else {
-            Text("No dog profiles found.", style = MaterialTheme.typography.bodyLarge)
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-        Button(
-            onClick = onNavigateToAddDog,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Icon(
-                imageVector = Icons.Default.Add,
-                contentDescription = "Add Dog",
-                modifier = Modifier.padding(end = 8.dp)
-            )
-            Text(if (userDogs.isEmpty()) "Add Dog Profile" else "Add Another Dog")
+    // Set initial selected dog if available
+    LaunchedEffect(userDogs) {
+        if (selectedDogId == null && userDogs.isNotEmpty()) {
+            selectedDogId = userDogs.first().id
+            dogProfileViewModel.setCurrentDog(userDogs.first().id)
         }
     }
+
+    // Update DogProfileList to handle ID selection
+    DogProfileList(
+        dogs = userDogs,
+        selectedDogId = selectedDogId,
+        onDogSelected = { dogId ->
+            selectedDogId = dogId
+            dogProfileViewModel.setCurrentDog(dogId)
+        },
+        viewModel = viewModel,
+        cameraLauncher = cameraLauncher,
+        galleryLauncher = galleryLauncher,
+        onNavigateToAddDog = onNavigateToAddDog
+    )
 }
 
 @Composable
 private fun DogProfileList(
     dogs: List<Dog>,
+    selectedDogId: String?,
+    onDogSelected: (String) -> Unit,
     viewModel: ProfileViewModel,
     cameraLauncher: ManagedActivityResultLauncher<Uri, Boolean>,
     galleryLauncher: ManagedActivityResultLauncher<String, Uri?>,
     onNavigateToAddDog: () -> Unit
 ) {
-    var selectedDog by remember { mutableStateOf(dogs.firstOrNull()) }
-    val allQuestionnaireResponses by viewModel.questionnaireResponses.collectAsStateWithLifecycle()
-
-    val selectedDogResponses = selectedDog?.let { dog ->
-        allQuestionnaireResponses[dog.id] ?: emptyMap()
-    } ?: emptyMap()
-
-    LaunchedEffect(selectedDog) {
-        selectedDog?.let { dog ->
-            viewModel.loadQuestionnaireResponses(dog.ownerId, dog.id)
-        }
-    }
-
     Column {
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(vertical = 8.dp)
         ) {
             items(dogs) { dog ->
-                DogSelectorItem(dog = dog, isSelected = dog == selectedDog) {
-                    selectedDog = dog
-                }
+                DogSelectorItem(
+                    dog = dog,
+                    isSelected = dog.id == selectedDogId,
+                    onClick = { onDogSelected(dog.id) }
+                )
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        selectedDog?.let { dog ->
+        // Only show selected dog's profile
+        dogs.find { it.id == selectedDogId }?.let { selectedDog ->
             DogProfileContent(
-                dog = dog,
-                questionnaireResponses = selectedDogResponses
+                dog = selectedDog,
+                questionnaireResponses = viewModel.questionnaireResponses
+                    .collectAsStateWithLifecycle()
+                    .value
+                    .getOrDefault(selectedDog.id, emptyMap())
             )
         }
     }
@@ -438,7 +420,7 @@ private fun DogPhotoItem(photoUrl: String?) {
 }
 
 @Composable
-private fun AddPhotoButton(onClick: () -> Unit) {
+fun AddPhotoButton(onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .aspectRatio(1f)

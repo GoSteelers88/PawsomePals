@@ -1,5 +1,6 @@
 package com.example.pawsomepals
 
+
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
@@ -12,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
+import com.example.pawsomepals.ui.screens.SwipingScreen
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -22,6 +24,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.net.URLDecoder
 import java.net.URLEncoder
+import com.example.pawsomepals.ui.theme.PlayfulDogProfileScreen
 import kotlin.time.Duration.Companion.milliseconds
 
 
@@ -47,6 +50,10 @@ sealed class Screen(val route: String) {
         fun createRoute(dogId: String = "new") = "add_edit_dog_profile/$dogId"
     }
     object AddDogQuestionnaire : Screen("add_dog_questionnaire")  // Add this new route
+
+    object PlayfulDogProfile : Screen("playful_dog_profile") {
+        fun createRoute() = route  // Simplified since we don't need dogId parameter
+    }
 
     object Playdate : Screen("playdate/{playdateId}") {
         fun createRoute(playdateId: String) = "playdate/${URLEncoder.encode(playdateId, "UTF-8")}"
@@ -79,7 +86,9 @@ fun AppNavigation(
     ratingViewModel: RatingViewModel,
     notificationViewModel: NotificationViewModel,
     swipingViewModel: SwipingViewModel,
-    trainerTipsViewModel: TrainerTipsViewModel
+    trainerTipsViewModel: TrainerTipsViewModel,
+    locationPermissionViewModel: LocationPermissionViewModel
+
 ) {
     val navController = rememberNavController()
     val authState by authViewModel.authState.collectAsState()
@@ -92,6 +101,7 @@ fun AppNavigation(
                 Log.d("Navigation", "Waiting for user data to load")
                 return@LaunchedEffect
             }
+
             authState == AuthViewModel.AuthState.Authenticated -> {
                 val userId = currentUser?.id ?: return@LaunchedEffect
                 Log.d("Navigation", "User authenticated: $userId")
@@ -102,11 +112,13 @@ fun AppNavigation(
                             popUpTo(0) { inclusive = true }
                         }
                     }
+
                     currentUser?.hasCompletedQuestionnaire == false -> {
                         navController.navigate(Screen.Questionnaire.createRoute(userId)) {
                             popUpTo(0) { inclusive = true }
                         }
                     }
+
                     else -> {
                         navController.navigate(Screen.MainScreen.route) {
                             popUpTo(0) { inclusive = true }
@@ -114,6 +126,7 @@ fun AppNavigation(
                     }
                 }
             }
+
             authState == AuthViewModel.AuthState.Unauthenticated -> {
                 navController.navigate(Screen.Login.route) {
                     popUpTo(0) { inclusive = true }
@@ -143,10 +156,12 @@ fun AppNavigation(
                 onNavigateToQuestionnaire = { existingDogId ->
                     if (currentUserId != null) {
                         // Update this navigation call to match the new route pattern
-                        navController.navigate(Screen.Questionnaire.createRoute(
-                            userId = currentUserId,
-                            dogId = existingDogId
-                        ))
+                        navController.navigate(
+                            Screen.Questionnaire.createRoute(
+                                userId = currentUserId,
+                                dogId = existingDogId
+                            )
+                        )
                     }
                 }
             )
@@ -209,9 +224,7 @@ fun AppNavigation(
         composable(
             route = "questionnaire/{userId}/{dogId}",
             arguments = listOf(
-                navArgument("userId") {
-                    type = NavType.StringType
-                },
+                navArgument("userId") { type = NavType.StringType },
                 navArgument("dogId") {
                     type = NavType.StringType
                     defaultValue = "none"
@@ -221,25 +234,7 @@ fun AppNavigation(
             val currentUserId = backStackEntry.arguments?.getString("userId") ?: ""
             val dogId = backStackEntry.arguments?.getString("dogId")?.takeIf { it != "none" }
             val scope = rememberCoroutineScope()
-            var showingCelebration by remember { mutableStateOf(false) }
             val completionStatus by questionnaireViewModel.completionStatus.collectAsState()
-
-            // Single LaunchedEffect for completion handling
-            LaunchedEffect(completionStatus) {
-                if (completionStatus) {
-                    Log.d("Navigation", "Questionnaire completed, preparing navigation")
-                    showingCelebration = true
-                    delay(3000) // Celebration animation duration
-
-                    if (dogId == null) {
-                        navController.navigate(Screen.MainScreen.route) {
-                            popUpTo(0) { inclusive = true }
-                        }
-                    } else {
-                        navController.popBackStack()
-                    }
-                }
-            }
 
             QuestionnaireScreen(
                 viewModel = questionnaireViewModel,
@@ -247,14 +242,19 @@ fun AppNavigation(
                 dogId = dogId,
                 onComplete = { answers ->
                     scope.launch {
-                        try {
-                            Log.d("Navigation", "Saving questionnaire responses")
-                            questionnaireViewModel.saveQuestionnaireResponses(currentUserId, dogId, answers as Map<String, String>)
-                            if (dogId == null) {
-                                authViewModel.setQuestionnaireCompleted(true)
+                        Log.d("Navigation", "Questionnaire completed, preparing navigation")
+                        // Wait for celebration animation
+                        delay(3500)
+
+                        if (dogId == null) {
+                            Log.d("Navigation", "New dog questionnaire - navigating to main screen")
+                            authViewModel.setQuestionnaireCompleted(true)
+                            navController.navigate(Screen.MainScreen.route) {
+                                popUpTo(0) { inclusive = true }
                             }
-                        } catch (e: Exception) {
-                            Log.e("Navigation", "Error during questionnaire completion", e)
+                        } else {
+                            Log.d("Navigation", "Existing dog questionnaire - navigating back")
+                            navController.popBackStack()
                         }
                     }
                 },
@@ -262,18 +262,10 @@ fun AppNavigation(
                     navController.popBackStack()
                 }
             )
-
-            if (showingCelebration) {
-                CelebrationOverlay {
-                    showingCelebration = false
-                }
-            }
         }
 
         composable(Screen.MainScreen.route) {
             val currentUser by authViewModel.currentUser.collectAsState()
-            val currentDog by dogProfileViewModel.currentDog.collectAsStateWithLifecycle()
-
             val isUserSetupComplete by remember {
                 derivedStateOf {
                     currentUser?.hasAcceptedTerms == true && currentUser?.hasCompletedQuestionnaire == true
@@ -288,11 +280,13 @@ fun AppNavigation(
                                 popUpTo(Screen.MainScreen.route) { inclusive = true }
                             }
                         }
+
                         !currentUser!!.hasAcceptedTerms -> {
                             navController.navigate(Screen.TermsOfService.route) {
                                 popUpTo(Screen.MainScreen.route) { inclusive = true }
                             }
                         }
+
                         !currentUser!!.hasCompletedQuestionnaire -> {
                             val userId = currentUser!!.id
                             navController.navigate(Screen.Questionnaire.createRoute(userId)) {
@@ -323,12 +317,23 @@ fun AppNavigation(
                             popUpTo(Screen.MainScreen.route) { inclusive = true }
                         }
                     },
-                    onProfileClick = { userId -> navController.navigate(Screen.Profile.createRoute(userId)) },
-                    onDogProfileClick = {
-                        val dogId = dogProfileViewModel.currentDog.value?.id ?: "new"
-                        navController.navigate(Screen.DogProfile.createRoute(dogId))
+                    onProfileClick = { userId ->
+                        navController.navigate(
+                            Screen.Profile.createRoute(
+                                userId
+                            )
+                        )
                     },
-                    onPlaydateClick = { playdateId -> navController.navigate(Screen.Playdate.createRoute(playdateId)) },
+                    onDogProfileClick = {
+                        navController.navigate(Screen.PlayfulDogProfile.createRoute())
+                    },
+                    onPlaydateClick = { playdateId ->
+                        navController.navigate(
+                            Screen.Playdate.createRoute(
+                                playdateId
+                            )
+                        )
+                    },
                     onChatClick = { chatId -> navController.navigate(Screen.Chat.createRoute(chatId)) },
                     onHealthAdvisorClick = { navController.navigate(Screen.HealthAdvisor.route) },
                     onSettingsClick = { navController.navigate(Screen.Settings.route) },
@@ -393,7 +398,10 @@ fun AppNavigation(
                 ErrorScreen(
                     errorMessage = "Unable to load profile. Please try again.",
                     onRetry = {
-                        navController.navigate(navController.currentBackStackEntry?.destination?.route ?: Screen.MainScreen.route)
+                        navController.navigate(
+                            navController.currentBackStackEntry?.destination?.route
+                                ?: Screen.MainScreen.route
+                        )
                     },
                     onNavigateBack = { navController.popBackStack() }
                 )
@@ -404,13 +412,14 @@ fun AppNavigation(
 
 
 
-        composable(Screen.Playdate.route) { backStackEntry ->
-            val playdateId = backStackEntry.arguments?.getString("playdateId") ?: ""
-            PlaydateScreen(
-                viewModel = playdateViewModel,
+
+        composable(route = Screen.PlayfulDogProfile.route) {
+            PlayfulDogProfileScreen(
+                viewModel = profileViewModel,
+                dogProfileViewModel = dogProfileViewModel,
                 onNavigateBack = { navController.popBackStack() },
-                onSchedulePlaydate = {
-                    navController.navigate(Screen.Playdate.createRoute("new"))
+                onNavigateToAddDog = {
+                    navController.navigate(Screen.AddEditDogProfile.createRoute())
                 }
             )
         }
@@ -466,8 +475,10 @@ fun AppNavigation(
         composable(Screen.Swiping.route) {
             SwipingScreen(
                 viewModel = swipingViewModel,
-                onSchedulePlaydate = { playdateId ->
-                    navController.navigate(Screen.Playdate.createRoute(playdateId))
+                dogProfileViewModel = dogProfileViewModel,
+                locationPermissionViewModel = locationPermissionViewModel,
+                onSchedulePlaydate = { dogId: String -> // Explicitly type the parameter
+                    navController.navigate(Screen.Playdate.createRoute(dogId))
                 }
             )
         }

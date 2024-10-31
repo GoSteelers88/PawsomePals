@@ -1,8 +1,10 @@
 [versions]
 agp = "8.5.2"
+androidxAppcompat = "1.6.1"
 coilComposeVersion = "2.2.2"
 exifinterfaceVersion = "1.3.6"
 firebaseFirestoreKtxVersion = "24.7.0"
+fragmentKtxVersion = "1.6.2"
 hamcrestCore = "2.2"
 hiltAndroidGradlePlugin = "2.44"
 kotlin = "1.9.21"
@@ -59,12 +61,15 @@ firebaseAppcheckPlayintegrity = "18.0.0"
 media3 = "1.2.0"
 annotation = "1.8.2"
 testng = "6.9.6"
+firebaseAppcheckDebug = "18.0.0"
 
 [libraries]
+androidx-appcompat-v161 = { module = "androidx.appcompat:appcompat", version.ref = "androidxAppcompat" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayout", version.ref = "constraintlayout" }
 androidx-exifinterface = { module = "androidx.exifinterface:exifinterface", version.ref = "exifinterfaceVersion" }
+androidx-fragment-ktx = { module = "androidx.fragment:fragment-ktx", version.ref = "fragmentKtxVersion" }
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycleRuntimeCompose" }
 androidx-material-icons-extended = { module = "androidx.compose.material:material-icons-extended", version.ref = "materialIconsExtended" }
 coil-compose-v222 = { module = "io.coil-kt:coil-compose", version.ref = "coilComposeVersion" }
@@ -153,6 +158,7 @@ mediation-test-suite = { group = "com.google.android.ads", name = "mediation-tes
 support-annotations = { group = "com.android.support", name = "support-annotations", version.ref = "supportAnnotations" }
 androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "annotation" }
 testng = { group = "org.testng", name = "testng", version.ref = "testng" }
+firebase-appcheck-debug = { group = "com.google.firebase", name = "firebase-appcheck-debug", version.ref = "firebaseAppcheckDebug" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

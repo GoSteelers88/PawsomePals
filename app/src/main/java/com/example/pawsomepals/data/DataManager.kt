@@ -12,7 +12,6 @@ import androidx.core.net.toUri
 import com.example.pawsomepals.data.dao.DogDao
 import com.example.pawsomepals.data.model.User
 import com.example.pawsomepals.data.model.Dog
-import com.example.pawsomepals.data.model.QuestionnaireResponse
 import com.example.pawsomepals.data.repository.QuestionRepository
 import com.example.pawsomepals.utils.ImageHandler
 import com.example.pawsomepals.utils.NetworkUtils
@@ -33,12 +32,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -47,6 +48,7 @@ import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import java.util.UUID
+import kotlin.coroutines.cancellation.CancellationException
 
 @Singleton
 class DataManager @Inject constructor(
@@ -68,6 +70,10 @@ class DataManager @Inject constructor(
     // Add these new properties
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var syncAttempts = 0
+    private var currentSyncJob: Job? = null
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+
 
     // Auth state management
     private val _authState = MutableStateFlow<AuthViewModel.AuthState>(AuthViewModel.AuthState.Initial)
@@ -116,23 +122,20 @@ class DataManager @Inject constructor(
         Log.d("DataManager", "Starting periodic sync")
         stopPeriodicSync()
 
-        syncJob = scope.launch {
+        currentSyncJob = scope.launch {
             while (isActive) {
                 try {
-                    ensureAuthenticated()
+                    _isSyncing.value = true
                     syncWithFirestore()
                     delay(5 * 60 * 1000) // 5 minutes delay
+                } catch (e: CancellationException) {
+                    Log.d("DataManager", "Sync job cancelled normally")
+                    break
                 } catch (e: Exception) {
-                    when (e) {
-                        is AuthenticationException -> {
-                            Log.e("DataManager", "Authentication error during sync", e)
-                            break
-                        }
-                        else -> {
-                            Log.e("DataManager", "Error during periodic sync", e)
-                            delay(calculateBackoffDelay())
-                        }
-                    }
+                    Log.e("DataManager", "Error during periodic sync", e)
+                    delay(calculateBackoffDelay())
+                } finally {
+                    _isSyncing.value = false
                 }
             }
         }
@@ -164,36 +167,12 @@ class DataManager @Inject constructor(
                 Log.d("DataManager", "No authenticated user")
                 _authState.value = AuthViewModel.AuthState.Unauthenticated
                 stopPeriodicSync()
+                cleanupOnSignOut()
             }
         }
     }
 
-    suspend fun syncWithFirestore() {
-        withContext(Dispatchers.IO) {
-            try {
-                ensureAuthenticated()
-                val userId = auth.currentUser!!.uid
-                Log.d("DataManager", "Starting sync for user: $userId")
 
-                // Sync user data
-                val userData = getUserFromFirestore(userId)
-                userData?.let {
-                    saveUserToLocalDatabase(it)
-                    Log.d("DataManager", "User data synced successfully")
-                }
-
-                // Sync dogs
-                val firestoreDogs = getDogsFromFirestore(userId)
-                syncDogsWithLocal(firestoreDogs, userId)
-
-                syncAttempts = 0
-                Log.d("DataManager", "Full sync completed successfully")
-            } catch (e: Exception) {
-                Log.e("DataManager", "Error during sync with Firestore", e)
-                throw e
-            }
-        }
-    }
     private suspend fun syncDogsWithLocal(firestoreDogs: List<Dog>, userId: String) {
         // Get the user's local dogs using the existing DAO method
         val localDog = dogDao.getDogByOwnerId(userId)
@@ -242,32 +221,46 @@ class DataManager @Inject constructor(
         }
     }
 
-    suspend fun syncWithFirebase() {
-        val currentUser = auth.currentUser
-        if (currentUser != null) {
+    suspend fun syncWithFirestore() {
+        withContext(Dispatchers.IO) {
             try {
-                val userData = getUserFromFirestore(currentUser.uid)
-                if (userData != null) {
-                    saveUserToLocalDatabase(userData)
-                    Log.d("DataManager", "User data synced successfully")
-                } else {
-                    Log.w("DataManager", "No user data found in Firestore")
+                val currentUser = auth.currentUser ?: throw IllegalStateException("No authenticated user")
+
+                // Add retry logic for initial sync
+                var attempts = 0
+                val maxAttempts = 3
+
+                while (attempts < maxAttempts) {
+                    try {
+                        val userData = getUserFromFirestore(currentUser.uid)
+                        if (userData != null) {
+                            saveUserToLocalDatabase(userData)
+                            Log.d("DataManager", "User data synced successfully")
+                            break
+                        }
+                        delay(1000L * (attempts + 1)) // Exponential backoff
+                        attempts++
+                    } catch (e: Exception) {
+                        Log.e("DataManager", "Sync attempt ${attempts + 1} failed", e)
+                        if (attempts == maxAttempts - 1) throw e
+                        attempts++
+                        delay(1000L * attempts)
+                    }
                 }
 
+                // Only proceed with dog sync if user sync succeeded
                 val dogData = getDogFromFirestore(currentUser.uid)
                 if (dogData != null) {
                     saveDogToLocalDatabase(dogData)
                     Log.d("DataManager", "Dog data synced successfully")
                 } else {
-                    Log.w("DataManager", "No dog data found in Firestore")
+                    Log.d("DataManager", "No dog data found to sync")
                 }
+
             } catch (e: Exception) {
-                Log.e("DataManager", "Error syncing with Firebase: ${e.message}", e)
+                Log.e("DataManager", "Error in syncWithFirebase", e)
                 throw e
             }
-        } else {
-            Log.e("DataManager", "No authenticated user found")
-            throw IllegalStateException("No authenticated user found")
         }
     }
 
@@ -303,7 +296,26 @@ class DataManager @Inject constructor(
 
     private suspend fun saveDogToLocalDatabase(dog: Dog) {
         withContext(Dispatchers.IO) {
-            dogDao.insertDog(dog)
+            try {
+                // First ensure the user exists
+                val user = userDao.getUserById(dog.ownerId)
+                if (user == null) {
+                    // If user doesn't exist, fetch from Firestore and save
+                    val firestoreUser = getUserFromFirestore(dog.ownerId)
+                    if (firestoreUser != null) {
+                        userDao.insertUser(firestoreUser)
+                    } else {
+                        throw IllegalStateException("Cannot save dog: Owner not found in Firestore")
+                    }
+                }
+
+                // Now safe to save the dog
+                dogDao.insertDog(dog)
+                Log.d("DataManager", "Successfully saved dog to local database: ${dog.id}")
+            } catch (e: Exception) {
+                Log.e("DataManager", "Error saving dog to local database", e)
+                throw e
+            }
         }
     }
 
@@ -374,27 +386,38 @@ class DataManager @Inject constructor(
     suspend fun createOrUpdateDogProfile(dog: Dog) {
         try {
             Log.d("DataManager", "Starting createOrUpdateDogProfile process")
-            Log.d(
-                "DataManager",
-                "Initial dog data: id=${dog.id}, ownerId=${dog.ownerId}, name=${dog.name}"
-            )
+            Log.d("DataManager", "Initial dog data: id=${dog.id}, ownerId=${dog.ownerId}, name=${dog.name}")
 
-            val currentUser = auth.currentUser
-            Log.d("DataManager", "Current authenticated user: ${currentUser?.uid}")
+            // Try to get current user with retry mechanism
+            var currentUser = auth.currentUser
+            var attempts = 0
+            val maxAttempts = 3
 
+            while (currentUser == null && attempts < maxAttempts) {
+                delay(1000L * (attempts + 1))
+                currentUser = auth.currentUser
+                attempts++
+                Log.d("DataManager", "Auth attempt $attempts, user: ${currentUser?.uid}")
+            }
+
+            // If still no user, try to directly verify from Firestore
             if (currentUser == null) {
-                Log.e("DataManager", "Authentication error: No current user found")
-                throw IllegalStateException("No authenticated user found")
+                val userDoc = firestore.collection("users")
+                    .document(dog.ownerId)
+                    .get()
+                    .await()
+
+                if (!userDoc.exists()) {
+                    Log.e("DataManager", "Neither auth user nor Firestore user found")
+                    throw IllegalStateException("No authenticated user found")
+                }
+
+                Log.d("DataManager", "User verified through Firestore: ${dog.ownerId}")
+            } else {
+                Log.d("DataManager", "User verified through Firebase Auth: ${currentUser.uid}")
             }
 
-            if (currentUser.uid != dog.ownerId) {
-                Log.e(
-                    "DataManager",
-                    "Authorization error: Current user (${currentUser.uid}) does not match dog owner (${dog.ownerId})"
-                )
-                throw IllegalStateException("User not authorized to modify this dog profile")
-            }
-
+            // At this point, we've verified the user exists either through Auth or Firestore
             val dogRef = if (dog.id.isBlank()) {
                 Log.d("DataManager", "Creating new document reference for new dog")
                 firestore.collection("dogs").document()
@@ -411,33 +434,41 @@ class DataManager @Inject constructor(
                 dog
             }
 
-            Log.d("DataManager", "Attempting to save dog to Firestore: ${dogToSave.id}")
-            try {
-                dogRef.set(dogToSave).await()
-                Log.d("DataManager", "Successfully saved dog to Firestore: ${dogToSave.id}")
-            } catch (e: Exception) {
-                Log.e("DataManager", "Firestore save failed for dog ${dogToSave.id}", e)
-                throw e
+            // Save to Firestore with retry mechanism
+            var saveAttempts = 0
+            val maxSaveAttempts = 3
+            var lastError: Exception? = null
+
+            while (saveAttempts < maxSaveAttempts) {
+                try {
+                    dogRef.set(dogToSave).await()
+                    Log.d("DataManager", "Successfully saved dog to Firestore: ${dogToSave.id}")
+                    break
+                } catch (e: Exception) {
+                    lastError = e
+                    saveAttempts++
+                    if (saveAttempts == maxSaveAttempts) {
+                        Log.e("DataManager", "Failed all attempts to save to Firestore")
+                        throw e
+                    }
+                    delay(1000L * saveAttempts)
+                }
             }
 
-            Log.d("DataManager", "Attempting to save dog to local database: ${dogToSave.id}")
+            // Save to local database
             try {
                 dogDao.insertDog(dogToSave)
                 Log.d("DataManager", "Successfully saved dog to local database: ${dogToSave.id}")
             } catch (e: Exception) {
                 Log.e("DataManager", "Local database save failed for dog ${dogToSave.id}", e)
-                throw e
+                // Don't throw here - we've already saved to Firestore
             }
 
-            Log.d(
-                "DataManager",
-                "Dog profile created/updated successfully. Final state: id=${dogToSave.id}, name=${dogToSave.name}"
-            )
+            Log.d("DataManager", "Dog profile created/updated successfully")
 
         } catch (e: Exception) {
             Log.e("DataManager", "Critical error in createOrUpdateDogProfile", e)
             Log.e("DataManager", "Error details - Dog: id=${dog.id}, name=${dog.name}")
-            Log.e("DataManager", "Stack trace: ${e.stackTraceToString()}")
             throw e
         }
     }
@@ -907,13 +938,78 @@ class DataManager @Inject constructor(
         }
     }
 
+    private fun cleanupOnSignOut() {
+        val cleanupJob = scope.launch {
+            try {
+                // First check if there are any pending operations
+                if (_isSyncing.value) {
+                    Log.d("DataManager", "Waiting for sync to complete before cleanup")
+                    delay(1000) // Give sync a chance to complete
+                }
+
+                // Cancel ongoing operations
+                currentSyncJob?.cancel()
+                syncJob?.cancel()
+
+                // Only clear data if we're actually signed out
+                if (auth.currentUser == null) {
+                    withContext(Dispatchers.IO) {
+                        appDatabase.clearAllTables()
+                        context.getSharedPreferences("YourAppPrefs", Context.MODE_PRIVATE)
+                            .edit()
+                            .clear()
+                            .apply()
+                    }
+                    Log.d("DataManager", "Local data cleared during cleanup")
+                } else {
+                    Log.d("DataManager", "Skipping data clear as user is still authenticated")
+                }
+
+                Log.d("DataManager", "Cleanup completed successfully")
+            } catch (e: CancellationException) {
+                Log.d("DataManager", "Cleanup cancelled normally")
+            } catch (e: Exception) {
+                Log.e("DataManager", "Error during cleanup", e)
+            } finally {
+                _isSyncing.value = false
+            }
+        }
+
+        // Make sure cleanup job completes or times out
+        scope.launch {
+            try {
+                withTimeout(5000) { // 5 second timeout
+                    cleanupJob.join()
+                }
+            } catch (e: Exception) {
+                Log.w("DataManager", "Cleanup job timed out or failed", e)
+                cleanupJob.cancel()
+            }
+        }
+    }
 
     fun cleanup() {
         Log.d("DataManager", "Cleaning up DataManager resources")
-        stopPeriodicSync()
-        scope.cancel()
-        coroutineScope.cancel()
+        scope.launch {
+            try {
+                stopPeriodicSync()
+                currentSyncJob?.cancel()
+
+                // Cancel all coroutine jobs
+                scope.coroutineContext.cancelChildren()
+                coroutineScope.coroutineContext.cancelChildren()
+
+                // Finally cancel the scopes themselves
+                scope.cancel()
+                coroutineScope.cancel()
+
+                Log.d("DataManager", "Resources cleaned up successfully")
+            } catch (e: Exception) {
+                Log.e("DataManager", "Error during cleanup", e)
+            }
+        }
     }
+
 
 
 

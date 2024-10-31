@@ -11,29 +11,55 @@ import java.time.LocalDate
 @Entity(tableName = "users")
 @TypeConverters(LocalDateConverter::class, Converters::class)
 data class User(
-    @PrimaryKey var id: String = "",
+    @PrimaryKey
+    var id: String = "",
+
+    // Basic user info
     var username: String = "",
     var email: String = "",
     var password: String = "",
-    var petName: String? = null,
     var firstName: String? = null,
     var lastName: String? = null,
     var bio: String? = null,
+
+    // Profile related
     var profilePictureUrl: String? = null,
+
+    // Dog relationship
+    @TypeConverters(Converters::class)
+    var dogIds: List<String> = emptyList(),
+
+    // User state
     var hasAcceptedTerms: Boolean = false,
     var hasCompletedQuestionnaire: Boolean = false,
-    @TypeConverters(Converters::class)
-    var questionnaireAnswers: Map<String, String>? = null,
+    var lastLoginTime: Long = System.currentTimeMillis(),
+
+    // Location
     val latitude: Double? = null,
     val longitude: Double? = null,
-    var lastLoginTime: Long = System.currentTimeMillis(),
+
+    // Subscription and features
     val hasSubscription: Boolean = false,
     var subscriptionEndDate: LocalDate? = null,
     var dailyQuestionCount: Int = 0,
+
+    // Contact preferences
     var phoneNumber: String? = null,
     var preferredContact: String? = null,
-    var notificationsEnabled: Boolean = true
+    var notificationsEnabled: Boolean = true,
+
+    // Firestore fields
+    @field:JvmField
+    var uid: String? = null,
+    @field:JvmField
+    var displayName: String? = null,
 ) {
     // No-argument constructor required by Firebase
-    constructor() : this("", "", "", "")
+    constructor() : this(id = "", username = "", email = "", password = "")
+
+    // Initialize Firestore-specific fields
+    init {
+        uid = id
+        displayName = username
+    }
 }

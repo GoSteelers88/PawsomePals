@@ -1,14 +1,21 @@
 package com.example.pawsomepals.data.model
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "photos")
+@Entity(
+    tableName = "photos",
+    indices = [
+        Index(value = ["ownerId", "isUserPhoto", "index"], unique = true)
+    ]
+)
 data class PhotoEntity(
-    @PrimaryKey val id: String, // This could be a UUID or URL
+    @PrimaryKey
+    val id: String,
     val url: String,
     val isUserPhoto: Boolean,
-    val ownerId: String, // This could be userId or dogId
-    val uploadDate: Long = System.currentTimeMillis(),
-    val description: String? = null
+    val ownerId: String,
+    val index: Int = 0,
+    val timestamp: Long = System.currentTimeMillis()
 )

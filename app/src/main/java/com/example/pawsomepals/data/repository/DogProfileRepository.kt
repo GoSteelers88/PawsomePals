@@ -2,10 +2,9 @@ package com.example.pawsomepals.data.repository
 
 import android.util.Log
 import com.example.pawsomepals.data.model.Dog
-import com.example.pawsomepals.data.model.ResultWrapper
+import com.example.pawsomepals.utils.DogIdGenerator
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.Query
-import com.google.firebase.firestore.QuerySnapshot
+import com.google.gson.Gson
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
@@ -20,7 +19,7 @@ class DogProfileRepository @Inject constructor(
 ) {
     companion object {
         private const val TAG = "DogProfileRepository"
-        private const val COLLECTION_DOGS = "dogProfiles"
+        private const val COLLECTION_DOGS = "dogs"
         private const val COLLECTION_LIKES = "likes"
         private const val COLLECTION_DISLIKES = "dislikes"
         private const val SUBCOLLECTION_LIKED_PROFILES = "likedProfiles"
@@ -29,20 +28,38 @@ class DogProfileRepository @Inject constructor(
 
     private val dogProfilesCollection = firestore.collection(COLLECTION_DOGS)
 
-    // Create new dog profile
-    suspend fun createDogProfile(dog: Dog): ResultWrapper<Dog> {
+    suspend fun createDogProfile(dog: Dog): Result<Dog> {
         return try {
-            val newDogRef = dogProfilesCollection.document()
-            val dogWithId = dog.copy(id = newDogRef.id)
-            newDogRef.set(dogWithId).await()
-            Log.d(TAG, "Created dog profile with ID: ${dogWithId.id}")
-            ResultWrapper.Success(dogWithId)
+            val dogId = if (dog.id.isBlank()) {
+                DogIdGenerator.generate(dog.ownerId)
+            } else {
+                dog.id
+            }
+
+            val dogWithId = dog.copy(id = dogId)
+            dogProfilesCollection.document(dogId)
+                .set(dogWithId)
+                .await()
+
+            Log.d(TAG, "Created dog profile with ID: $dogId")
+            Result.success(dogWithId)
         } catch (e: Exception) {
             Log.e(TAG, "Error creating dog profile", e)
-            ResultWrapper.Error(e)
+            Result.failure(e)
         }
     }
-    // Update existing dog profile
+
+    suspend fun validateDogId(dogId: String): Result<Boolean> {
+        return try {
+            if (!DogIdGenerator.isValid(dogId)) return Result.success(false)
+            val doc = dogProfilesCollection.document(dogId).get().await()
+            Result.success(doc.exists())
+        } catch (e: Exception) {
+            Log.e(TAG, "Error validating dog ID: $dogId", e)
+            Result.failure(e)
+        }
+    }
+
     suspend fun updateDogProfile(dog: Dog): Result<Unit> {
         return try {
             dogProfilesCollection.document(dog.id).set(dog).await()
@@ -54,23 +71,20 @@ class DogProfileRepository @Inject constructor(
         }
     }
 
-    // Get dog profile as Flow
-    fun getDogProfile(dogId: String): Flow<Dog?> = flow {
+    fun getDogProfile(dogId: String): Flow<Result<Dog?>> = flow {
         try {
             val snapshot = dogProfilesCollection.document(dogId).get().await()
             val dog = snapshot.toObject(Dog::class.java)
-            emit(dog)
             Log.d(TAG, "Retrieved dog profile: ${dog?.id}")
+            emit(Result.success(dog)) // emit must be the last expression
         } catch (e: Exception) {
             Log.e(TAG, "Error getting dog profile: $dogId", e)
-            throw e
+            emit(Result.failure(e)) // emit must be the last expression
         }
     }.catch { e ->
         Log.e(TAG, "Error in dog profile flow: $dogId", e)
-        throw e
+        emit(Result.failure(e)) // emit must be the last expression
     }
-
-    // Get dog profile directly (suspend function)
     suspend fun getDogProfileById(dogId: String): Result<Dog?> {
         return try {
             val snapshot = dogProfilesCollection.document(dogId).get().await()
@@ -83,23 +97,21 @@ class DogProfileRepository @Inject constructor(
         }
     }
 
-    // Get user's dog profiles
-    fun getDogProfilesByOwner(ownerId: String): Flow<List<Dog>> = flow {
+    fun getDogProfilesByOwner(ownerId: String): Flow<Result<List<Dog>>> = flow {
         try {
             val snapshot = dogProfilesCollection
                 .whereEqualTo("ownerId", ownerId)
                 .get()
                 .await()
             val dogs = snapshot.toObjects(Dog::class.java)
-            emit(dogs)
+            emit(Result.success(dogs))
             Log.d(TAG, "Retrieved ${dogs.size} dogs for owner: $ownerId")
         } catch (e: Exception) {
             Log.e(TAG, "Error getting dogs for owner: $ownerId", e)
-            throw e
+            emit(Result.failure(e))
         }
     }
 
-    // Update dog photo URLs
     suspend fun updateDogPhotoUrls(dogId: String, photoUrls: List<String?>): Result<Unit> {
         return try {
             val updates = mapOf("photoUrls" to photoUrls)
@@ -112,11 +124,28 @@ class DogProfileRepository @Inject constructor(
         }
     }
 
-    // Create or update dog profile
     suspend fun createOrUpdateDogProfile(dog: Dog): Result<Unit> {
         return try {
-            dogProfilesCollection.document(dog.id).set(dog).await()
-            Log.d(TAG, "Created/Updated dog profile: ${dog.id}")
+            // Log the dog object before saving
+            Log.d(TAG, "Attempting to save dog profile: ${Gson().toJson(dog)}")
+
+            // Convert dog to map to ensure all fields are properly serialized
+            val dogMap = dog.toMap()
+            Log.d(TAG, "Dog as map: $dogMap")
+
+            // Save to Firestore
+            dogProfilesCollection.document(dog.id)
+                .set(dogMap)
+                .await()
+
+            // Verify the save by reading back
+            val savedDog = dogProfilesCollection.document(dog.id)
+                .get()
+                .await()
+                .toObject(Dog::class.java)
+
+            Log.d(TAG, "Verified saved dog: ${Gson().toJson(savedDog)}")
+
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Error creating/updating dog profile: ${dog.id}", e)
@@ -124,7 +153,38 @@ class DogProfileRepository @Inject constructor(
         }
     }
 
-    // Delete dog profile
+    private fun Dog.toMap(): Map<String, Any?> {
+        return mapOf(
+            "id" to id,
+            "ownerId" to ownerId,
+            "name" to name,
+            "breed" to breed,
+            "age" to age,
+            "gender" to gender,
+            "size" to size,
+            "energyLevel" to energyLevel,
+            "friendliness" to friendliness,
+            "profilePictureUrl" to profilePictureUrl,
+            "isSpayedNeutered" to isSpayedNeutered,
+            "friendlyWithDogs" to friendlyWithDogs,
+            "friendlyWithChildren" to friendlyWithChildren,
+            "specialNeeds" to specialNeeds,
+            "favoriteToy" to favoriteToy,
+            "preferredActivities" to preferredActivities,
+            "walkFrequency" to walkFrequency,
+            "favoriteTreat" to favoriteTreat,
+            "trainingCertifications" to trainingCertifications,
+            "latitude" to latitude,
+            "longitude" to longitude,
+            "photoUrls" to photoUrls,
+            "trainability" to trainability,
+            "friendlyWithStrangers" to friendlyWithStrangers,
+            "exerciseNeeds" to exerciseNeeds,
+            "groomingNeeds" to groomingNeeds,
+            "weight" to weight,
+            "achievements" to achievements
+        )
+    }
     suspend fun deleteDogProfile(dogId: String): Result<Unit> {
         return try {
             dogProfilesCollection.document(dogId).delete().await()
@@ -136,7 +196,6 @@ class DogProfileRepository @Inject constructor(
         }
     }
 
-    // Update dog location
     suspend fun updateDogLocation(dogId: String, latitude: Double, longitude: Double): Result<Unit> {
         return try {
             val updates = mapOf(
@@ -152,10 +211,10 @@ class DogProfileRepository @Inject constructor(
         }
     }
 
-    // Get profiles for swiping (excluding current user's dogs and already swiped profiles)
     suspend fun getSwipingProfiles(): Result<List<Dog>> {
         return try {
-            val currentUserId = userRepository.getCurrentUserId() ?: throw IllegalStateException("No current user")
+            val currentUserId = userRepository.getCurrentUserId()
+                ?: throw IllegalStateException("No current user")
 
             val snapshot = dogProfilesCollection
                 .whereNotEqualTo("ownerId", currentUserId)
@@ -164,7 +223,7 @@ class DogProfileRepository @Inject constructor(
 
             val allDogs = snapshot.toObjects(Dog::class.java)
             val filteredDogs = allDogs.filter { dog ->
-                !hasBeenSwiped(currentUserId, dog.id).getOrDefault(false)
+                !hasBeenSwiped(currentUserId, dog.id).getOrNull()!! ?: false
             }
 
             Log.d(TAG, "Retrieved ${filteredDogs.size} dogs for swiping")
@@ -175,7 +234,6 @@ class DogProfileRepository @Inject constructor(
         }
     }
 
-    // Check if a profile has been swiped
     private suspend fun hasBeenSwiped(userId: String, profileId: String): Result<Boolean> {
         return try {
             val likeSnapshot = firestore.collection(COLLECTION_LIKES)
@@ -199,8 +257,7 @@ class DogProfileRepository @Inject constructor(
         }
     }
 
-    // Search dog profiles
-    suspend fun searchDogProfiles(query: String): ResultWrapper<List<Dog>> {
+    suspend fun searchDogProfiles(query: String): Result<List<Dog>> {
         return try {
             val snapshot = dogProfilesCollection
                 .whereGreaterThanOrEqualTo("name", query)
@@ -210,14 +267,13 @@ class DogProfileRepository @Inject constructor(
 
             val dogs = snapshot.toObjects(Dog::class.java)
             Log.d(TAG, "Found ${dogs.size} dogs matching query: $query")
-            ResultWrapper.Success(dogs)
+            Result.success(dogs)
         } catch (e: Exception) {
             Log.e(TAG, "Error searching dog profiles", e)
-            ResultWrapper.Error(e)
+            Result.failure(e)
         }
     }
 
-    // Get current user's dog profile
     suspend fun getCurrentUserDogProfile(userId: String): Result<Dog?> {
         return try {
             val snapshot = dogProfilesCollection

@@ -1,7 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.PawsomePals" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.PawsomePals" parent="Theme.AppCompat.Light.NoActionBar">
+        <!-- Keep your existing background colors -->
         <item name="android:windowBackground">@color/background_beige</item>
         <item name="android:colorBackground">@color/background_beige</item>
+
+        <!-- Add Material compatibility -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+
+        <!-- AppCompat compatibility -->
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
     </style>
 </resources>

@@ -9,10 +9,8 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.tasks.await
-import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -47,17 +45,6 @@ class MatchRepository @Inject constructor(
         }
     }
 
-    suspend fun removeMatch(matchId: String): ResultWrapper<Unit> {
-        return try {
-            Log.d(TAG, "Removing match: $matchId")
-            firestore.collection(COLLECTION_MATCHES).document(matchId).delete().await()
-            ResultWrapper.Success(Unit)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error removing match", e)
-            ResultWrapper.Error(e)
-        }
-    }
-
     suspend fun addDislike(dislikedProfileId: String): ResultWrapper<Unit> {
         return try {
             Log.d(TAG, "Adding dislike from $userId to $dislikedProfileId")
@@ -70,14 +57,103 @@ class MatchRepository @Inject constructor(
         }
     }
 
+    suspend fun removeMatch(matchId: String): ResultWrapper<Unit> {
+        return try {
+            firestore.collection(COLLECTION_MATCHES).document(matchId).delete().await()
+            ResultWrapper.Success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error removing match", e)
+            ResultWrapper.Error(e)
+        }
+    }
+
+    suspend fun isMatch(otherProfileId: String): ResultWrapper<Boolean> {
+        return try {
+            val currentDogResult = dogProfileRepository.getDogProfile(userId)
+                .map { it.getOrNull() }
+                .firstOrNull()
+
+            val otherDogResult = dogProfileRepository.getDogProfile(otherProfileId)
+                .map { it.getOrNull() }
+                .firstOrNull()
+
+            if (currentDogResult != null && otherDogResult != null) {
+                ResultWrapper.Success(matchingService.isMatch(currentDogResult, otherDogResult))
+            } else {
+                ResultWrapper.Error(Exception("Could not find one or both dog profiles"))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking match compatibility", e)
+            ResultWrapper.Error(e)
+        }
+    }
+
+    fun getUserMatches(): Flow<List<Dog>> = flow {
+        try {
+            val matchesQuery = firestore.collection(COLLECTION_MATCHES)
+                .whereEqualTo("user1Id", userId)
+                .get()
+                .await()
+
+            val matchedDogs = mutableListOf<Dog>()
+
+            for (doc in matchesQuery.documents) {
+                val matchedUserId = doc.getString("user2Id")
+                if (matchedUserId != null) {
+                    dogProfileRepository.getDogProfile(matchedUserId)
+                        .map { result -> result.getOrNull() }
+                        .firstOrNull()
+                        ?.let { dog ->
+                            if (dog != null) {
+                                matchedDogs.add(dog)
+                            }
+                        }
+                }
+            }
+            emit(matchedDogs)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting user matches", e)
+            emit(emptyList())
+        }
+    }
+
+    fun getRecentMatches(limit: Int = 10): Flow<List<Dog>> = flow {
+        try {
+            val matchesQuery = firestore.collection(COLLECTION_MATCHES)
+                .whereEqualTo("user1Id", userId)
+                .orderBy("timestamp", Query.Direction.DESCENDING)
+                .limit(limit.toLong())
+                .get()
+                .await()
+
+            val matchedDogs = mutableListOf<Dog>()
+
+            for (doc in matchesQuery.documents) {
+                val matchedUserId = doc.getString("user2Id")
+                if (matchedUserId != null) {
+                    dogProfileRepository.getDogProfile(matchedUserId)
+                        .map { result -> result.getOrNull() }
+                        .firstOrNull()
+                        ?.let { dog ->
+                            if (dog != null) {
+                                matchedDogs.add(dog)
+                            }
+                        }
+                }
+            }
+            emit(matchedDogs)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting recent matches", e)
+            emit(emptyList())
+        }
+    }
+
     private suspend fun checkForMatch(likedProfileId: String): ResultWrapper<Unit> {
         return try {
-            Log.d(TAG, "Checking for mutual match between $userId and $likedProfileId")
             val otherUserLikeRef = realtimeDb.getReference("$COLLECTION_LIKES/$likedProfileId/$userId")
             val otherUserLike = otherUserLikeRef.get().await()
 
             if (otherUserLike.exists()) {
-                Log.d(TAG, "Match found! Creating match record")
                 createMatch(likedProfileId)
             }
             ResultWrapper.Success(Unit)
@@ -97,7 +173,6 @@ class MatchRepository @Inject constructor(
                 timestamp = System.currentTimeMillis()
             )
             firestore.collection(COLLECTION_MATCHES).document(matchId).set(match).await()
-            Log.d(TAG, "Match created successfully: $matchId")
             ResultWrapper.Success(match)
         } catch (e: Exception) {
             Log.e(TAG, "Error creating match", e)
@@ -105,113 +180,21 @@ class MatchRepository @Inject constructor(
         }
     }
 
-    fun getUserMatches(): Flow<List<Dog>> = flow {
-        try {
-            Log.d(TAG, "Fetching matches for user: $userId")
-            val matchesQuery = firestore.collection(COLLECTION_MATCHES)
-                .whereEqualTo("user1Id", userId)
-                .get()
-                .await()
-
-            val matchedDogs = mutableListOf<Dog>()
-
-            matchesQuery.documents.forEach { doc ->
-                val matchedUserId = doc.getString("user2Id")
-                if (matchedUserId != null) {
-                    dogProfileRepository.getDogProfile(matchedUserId).collect { dog ->
-                        dog?.let { matchedDogs.add(it) }
-                    }
-                }
-            }
-
-            Log.d(TAG, "Found ${matchedDogs.size} matches")
-            emit(matchedDogs)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting user matches", e)
-            emit(emptyList())
-        }
-    }
-
-    suspend fun getMatchDetails(matchId: String): ResultWrapper<Match> {
-        return try {
-            val matchDoc = firestore.collection(COLLECTION_MATCHES)
-                .document(matchId)
-                .get()
-                .await()
-
-            if (matchDoc.exists()) {
-                val match = matchDoc.toObject(Match::class.java)
-                if (match != null) {
-                    ResultWrapper.Success(match)
-                } else {
-                    ResultWrapper.Error(Exception("Failed to parse match data"))
-                }
-            } else {
-                ResultWrapper.Error(Exception("Match not found"))
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting match details", e)
-            ResultWrapper.Error(e)
-        }
-    }
-
-    fun getRecentMatches(limit: Int = 10): Flow<List<Dog>> = flow {
-        try {
-            Log.d(TAG, "Fetching recent matches for user: $userId")
-            val matchesQuery = firestore.collection(COLLECTION_MATCHES)
-                .whereEqualTo("user1Id", userId)
-                .orderBy("timestamp", Query.Direction.DESCENDING)
-                .limit(limit.toLong())
-                .get()
-                .await()
-
-            val matchedDogs = mutableListOf<Dog>()
-
-            matchesQuery.documents.forEach { doc ->
-                val matchedUserId = doc.getString("user2Id")
-                if (matchedUserId != null) {
-                    dogProfileRepository.getDogProfile(matchedUserId).collect { dog ->
-                        dog?.let { matchedDogs.add(it) }
-                    }
-                }
-            }
-
-            Log.d(TAG, "Found ${matchedDogs.size} recent matches")
-            emit(matchedDogs)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting recent matches", e)
-            emit(emptyList())
-        }
-    }
-
-    suspend fun isMatch(otherProfileId: String): ResultWrapper<Boolean> {
-        return try {
-            var isMatched = false
-            dogProfileRepository.getDogProfile(userId).collect { currentDog ->
-                dogProfileRepository.getDogProfile(otherProfileId).collect { otherDog ->
-                    if (currentDog != null && otherDog != null) {
-                        isMatched = matchingService.isMatch(currentDog, otherDog)
-                    }
-                }
-            }
-            ResultWrapper.Success(isMatched)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error checking match compatibility", e)
-            ResultWrapper.Error(e)
-        }
-    }
-
     suspend fun getCompatibilityScore(otherProfileId: String): ResultWrapper<Double> {
         return try {
-            var score = 0.0
-            dogProfileRepository.getDogProfile(userId).collect { currentDog ->
-                dogProfileRepository.getDogProfile(otherProfileId).collect { otherDog ->
-                    if (currentDog != null && otherDog != null) {
-                        score = matchingService.getCompatibilityScore(currentDog, otherDog)
-                    }
-                }
+            val currentDogResult = dogProfileRepository.getDogProfile(userId)
+                .map { it.getOrNull() }
+                .firstOrNull()
+
+            val otherDogResult = dogProfileRepository.getDogProfile(otherProfileId)
+                .map { it.getOrNull() }
+                .firstOrNull()
+
+            if (currentDogResult != null && otherDogResult != null) {
+                ResultWrapper.Success(matchingService.getCompatibilityScore(currentDogResult, otherDogResult))
+            } else {
+                ResultWrapper.Error(Exception("Could not find one or both dog profiles"))
             }
-            ResultWrapper.Success(score)
         } catch (e: Exception) {
             Log.e(TAG, "Error calculating compatibility score", e)
             ResultWrapper.Error(e)

@@ -1,10 +1,10 @@
 package com.example.pawsomepals.ui.components
 
-
-
 import android.Manifest
 import android.content.Context
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -12,28 +12,75 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.example.pawsomepals.utils.*
+import androidx.core.content.FileProvider
+import com.example.pawsomepals.utils.ImageHandler
+import com.example.pawsomepals.viewmodel.ProfileViewModel
+import kotlinx.coroutines.launch
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.*
 
 @Composable
 fun PhotoPicker(
     imageHandler: ImageHandler,
-    onPhotoSelected: (Uri) -> Unit,
-    onDismiss: () -> Unit
+    onPhotoSelected: suspend (Uri) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val cameraState = rememberCameraState(context, imageHandler, onPhotoSelected)
-    val permissionState = rememberCameraPermissionState()
+    val scope = rememberCoroutineScope()
+    var tempPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    var showError by remember { mutableStateOf<String?>(null) }
+    var hasCameraPermission by remember { mutableStateOf<Boolean?>(null) }
 
-    val (permissionLauncher, cameraLauncher) = rememberCameraLaunchers(
-        cameraState = cameraState,
-        permissionState = permissionState,
-        onDenied = {
-            // Show permission denied message
-            onDismiss()
+    // Camera launcher - declare before permission launcher
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success && tempPhotoUri != null) {
+            scope.launch {
+                try {
+                    val processedUri = imageHandler.processImage(tempPhotoUri!!)
+                    onPhotoSelected(processedUri)
+                    onDismiss()
+                } catch (e: Exception) {
+                    showError = "Failed to process photo: ${e.message}"
+                }
+            }
         }
-    )
+    }
 
-    val galleryLauncher = rememberGalleryLauncher(onPhotoSelected)
+    // Permission launcher
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasCameraPermission = isGranted
+        if (isGranted) {
+            tempPhotoUri = createTempPhotoUri(context)
+            tempPhotoUri?.let { uri ->
+                cameraLauncher.launch(uri)
+            }
+        } else {
+            showError = "Camera permission is required to take photos"
+        }
+    }
+
+    // Gallery launcher
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            scope.launch {
+                try {
+                    val processedUri = imageHandler.processImage(it)
+                    onPhotoSelected(processedUri)
+                    onDismiss()
+                } catch (e: Exception) {
+                    showError = "Failed to process photo: ${e.message}"
+                }
+            }
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -47,28 +94,25 @@ fun PhotoPicker(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Button(
-                    onClick = {
-                        if (permissionState.permissionGranted) {
-                            val photoUri = cameraState.getNewPhotoUri()
-                            cameraLauncher.launch(photoUri)
-                        } else {
-                            permissionLauncher.launch(Manifest.permission.CAMERA)
-                        }
-                        onDismiss()
-                    },
+                    onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Take Photo")
                 }
 
                 Button(
-                    onClick = {
-                        galleryLauncher.launch("image/*")
-                        onDismiss()
-                    },
+                    onClick = { galleryLauncher.launch("image/*") },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Choose from Gallery")
+                }
+
+                showError?.let { error ->
+                    Text(
+                        text = error,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
         },
@@ -79,27 +123,55 @@ fun PhotoPicker(
             }
         }
     )
+
+    // Cleanup on dispose
+    DisposableEffect(Unit) {
+        onDispose {
+            tempPhotoUri?.path?.let { path ->
+                File(path).delete()
+            }
+        }
+    }
 }
 
-// Example usage:
-/*
+private fun createTempPhotoUri(context: Context): Uri {
+    val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+    val storageDir = context.getExternalFilesDir("temp_photos")?.apply { mkdirs() }
+    val photoFile = File.createTempFile(
+        "JPEG_${timeStamp}_",
+        ".jpg",
+        storageDir
+    ).apply {
+        deleteOnExit()
+    }
+
+    return FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        photoFile
+    )
+}
+
 @Composable
-fun ProfileScreen(
-    viewModel: ProfileViewModel,
-    imageHandler: ImageHandler
+fun PhotoPickerButton(
+    onPhotoSelected: suspend (Uri) -> Unit,
+    imageHandler: ImageHandler,
+    modifier: Modifier = Modifier
 ) {
     var showPhotoPicker by remember { mutableStateOf(false) }
 
     if (showPhotoPicker) {
         PhotoPicker(
             imageHandler = imageHandler,
-            onPhotoSelected = { uri ->
-                viewModel.updateUserProfilePicture(uri)
-            },
+            onPhotoSelected = onPhotoSelected,
             onDismiss = { showPhotoPicker = false }
         )
     }
 
-    // Rest of your profile screen...
+    Button(
+        onClick = { showPhotoPicker = true },
+        modifier = modifier
+    ) {
+        Text("Change Photo")
+    }
 }
-*/

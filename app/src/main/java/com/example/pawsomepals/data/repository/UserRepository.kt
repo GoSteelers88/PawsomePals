@@ -57,6 +57,20 @@ class UserRepository(
                 ?.also { dogDao.insertDog(it) }
         }
     }
+    suspend fun createUserInFirestore(user: User) {
+        withContext(Dispatchers.IO) {
+            try {
+                firestore.collection("users")
+                    .document(user.id)
+                    .set(user)
+                    .await()
+                Log.d("UserRepository", "User saved to Firestore successfully: ${user.id}")
+            } catch (e: Exception) {
+                Log.e("UserRepository", "Error saving user to Firestore", e)
+                throw e
+            }
+        }
+    }
 
     suspend fun getDogProfileById(profileId: String): Dog? {
         return withContext(Dispatchers.IO) {
@@ -161,29 +175,44 @@ class UserRepository(
     suspend fun registerUser(username: String, email: String, password: String, petName: String?) {
         withContext(Dispatchers.IO) {
             val userId = UUID.randomUUID().toString()
+            // Create user without petName
             val user = User(
                 id = userId,
                 username = username,
                 email = email,
                 password = password,
-                petName = petName,
+                dogIds = emptyList(),  // Initialize empty dog list
                 hasAcceptedTerms = false,
                 hasCompletedQuestionnaire = false
             )
             insertUser(user)
 
+            // If petName provided, create initial dog and update user's dogIds
             if (!petName.isNullOrBlank()) {
                 val dogId = UUID.randomUUID().toString()
                 val dog = Dog(
                     id = dogId,
                     ownerId = userId,
-                    name = petName,
-                    // ... other dog properties
+                    name = petName
                 )
                 insertDog(dog)
+
+                // Update user with new dogId
+                val updatedUser = user.copy(dogIds = listOf(dogId))
+                updateUser(updatedUser)
             }
         }
     }
+    suspend fun addDogToUser(userId: String, dogId: String) {
+        withContext(Dispatchers.IO) {
+            val user = getUserById(userId) ?: return@withContext
+            val updatedUser = user.copy(
+                dogIds = user.dogIds + dogId
+            )
+            updateUser(updatedUser)
+        }
+    }
+
 
     suspend fun updateUser(user: User) {
         withContext(Dispatchers.IO) {

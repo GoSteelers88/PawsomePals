@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.annotation.RequiresApi
+import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -16,7 +17,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity :  AppCompatActivity() {
     @Inject
     lateinit var viewModelFactory: ViewModelFactory.Factory
 
@@ -35,6 +36,8 @@ class MainActivity : ComponentActivity() {
     private val swipingViewModel by viewModels<SwipingViewModel>()
     private val trainerTipsViewModel by viewModels<TrainerTipsViewModel>()
     private val questionnaireViewModel by viewModels<QuestionnaireViewModel>()
+    private val locationPermissionViewModel by viewModels<LocationPermissionViewModel>() // Added this line
+
 
     @RequiresApi(Build.VERSION_CODES.O)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,7 +62,8 @@ class MainActivity : ComponentActivity() {
                         notificationViewModel = notificationViewModel,
                         swipingViewModel = swipingViewModel,
                         trainerTipsViewModel = trainerTipsViewModel,
-                        questionnaireViewModel = questionnaireViewModel
+                        questionnaireViewModel = questionnaireViewModel,
+                        locationPermissionViewModel = locationPermissionViewModel
                     )
                 }
             }

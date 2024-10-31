@@ -29,7 +29,6 @@ import com.example.pawsomepals.data.model.Settings
 import com.example.pawsomepals.data.model.Swipe
 import com.example.pawsomepals.data.model.Timeslot
 import com.example.pawsomepals.data.model.User
-import com.example.pawsomepals.data.model.QuestionnaireResponse
 
 @Database(
     entities = [
@@ -44,9 +43,9 @@ import com.example.pawsomepals.data.model.QuestionnaireResponse
         Chat::class,
         Message::class,
         Rating::class,
-        QuestionnaireResponse::class
+
     ],
-    version = 21,
+    version = 24,
     exportSchema = true
 )
 @TypeConverters(IntListConverter::class, LongListConverter::class, LocalDateConverter::class, Converters::class)

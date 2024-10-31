@@ -118,6 +118,10 @@ dependencies {
     implementation (libs.androidx.material.icons.extended)
     implementation (libs.androidx.lifecycle.runtime.compose)
     implementation (libs.androidx.exifinterface)
+    implementation (libs.androidx.fragment.ktx)
+    implementation (libs.androidx.appcompat.v161)
+
+
 
 
     // Retrofit
@@ -144,6 +148,7 @@ dependencies {
     // Room
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
+    implementation(libs.firebase.appcheck.debug)
     kapt(libs.androidx.room.compiler)
 
     // Firebase

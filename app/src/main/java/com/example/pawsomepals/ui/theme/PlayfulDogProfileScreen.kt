@@ -33,16 +33,18 @@ import com.example.pawsomepals.ui.components.DogCard
 import com.example.pawsomepals.ui.components.DogDetailedProfile
 import com.example.pawsomepals.ui.components.EmptyDogsView
 import com.example.pawsomepals.ui.components.FloatingBonesAnimation
+import com.example.pawsomepals.viewmodel.DogProfileViewModel
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlayfulDogProfileScreen(
     viewModel: ProfileViewModel,
+    dogProfileViewModel: DogProfileViewModel,  // Add this parameter
     onNavigateBack: () -> Unit,
     onNavigateToAddDog: () -> Unit
 ) {
-    val userDogs by viewModel.userDogs.collectAsStateWithLifecycle()
+    val userDogs by dogProfileViewModel.userDogs.collectAsStateWithLifecycle()
     val questionnairesResponses by viewModel.questionnaireResponses.collectAsStateWithLifecycle()
     var selectedDogId by remember { mutableStateOf<String?>(null) }
     var showFloatingBones by remember { mutableStateOf(true) }
@@ -59,6 +61,9 @@ fun PlayfulDogProfileScreen(
         ),
         label = "backgroundColorAnimation"
     )
+    LaunchedEffect(Unit) {
+        dogProfileViewModel.loadUserDogs()
+    }
 
     Scaffold(
         topBar = {

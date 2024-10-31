@@ -1,7 +1,6 @@
 package com.example.pawsomepals.service
 
 import com.example.pawsomepals.data.model.Dog
-import com.example.pawsomepals.data.model.DogProfile
 import kotlin.math.abs
 
 class MatchingService(private val locationService: LocationService) {
@@ -13,7 +12,7 @@ class MatchingService(private val locationService: LocationService) {
         return getCompatibilityScore(profile1, profile2) >= MATCH_THRESHOLD
     }
 
-    fun getCompatibilityScore(profile1: Dog, profile2: Dog): Double{
+    fun getCompatibilityScore(profile1: Dog, profile2: Dog): Double {
         var score = 0.0
         var totalWeight = 0.0
 
@@ -26,7 +25,7 @@ class MatchingService(private val locationService: LocationService) {
         totalWeight += 0.2
 
         // Age compatibility (weight: 0.15)
-        score += getAgeCompatibility(profile1.age, profile2.age) * 0.15
+        score += getAgeCompatibility(profile1.age ?: 0, profile2.age ?: 0) * 0.15
         totalWeight += 0.15
 
         // Breed compatibility (weight: 0.1)
@@ -42,18 +41,17 @@ class MatchingService(private val locationService: LocationService) {
         totalWeight += 0.2
 
         // Additional factors (if available)
-        profile1.isSpayedNeutered?.let { spayed1 ->
-            profile2.isSpayedNeutered?.let { spayed2 ->
-                score += if (spayed1 == spayed2) 0.05 else 0.0
-                totalWeight += 0.05
-            }
+        if (profile1.isSpayedNeutered != null && profile2.isSpayedNeutered != null) {
+            score += if (profile1.isSpayedNeutered == profile2.isSpayedNeutered) 0.05 else 0.0
+            totalWeight += 0.05
         }
 
         // Normalize the score
         return if (totalWeight > 0) score / totalWeight else 0.0
     }
 
-    private fun getSizeCompatibility(size1: String, size2: String): Double {
+    private fun getSizeCompatibility(size1: String?, size2: String?): Double {
+        if (size1 == null || size2 == null) return 0.5
         return when {
             size1 == size2 -> 1.0
             abs(sizeToNumber(size1) - sizeToNumber(size2)) == 1 -> 0.5
@@ -70,7 +68,8 @@ class MatchingService(private val locationService: LocationService) {
         }
     }
 
-    private fun getEnergyLevelCompatibility(energy1: String, energy2: String): Double {
+    private fun getEnergyLevelCompatibility(energy1: String?, energy2: String?): Double {
+        if (energy1 == null || energy2 == null) return 0.5
         val diff = abs(energyLevelToNumber(energy1) - energyLevelToNumber(energy2))
         return 1.0 - (diff.toDouble() / 4.0)
     }
@@ -95,12 +94,13 @@ class MatchingService(private val locationService: LocationService) {
         }
     }
 
-    private fun getBreedCompatibility(breed1: String, breed2: String): Double {
-        // This is a simplified version. You might want to group breeds or use a more sophisticated approach
+    private fun getBreedCompatibility(breed1: String?, breed2: String?): Double {
+        if (breed1 == null || breed2 == null) return 0.5
         return if (breed1 == breed2) 1.0 else 0.5
     }
 
-    private fun getFriendlinessCompatibility(friendliness1: String, friendliness2: String): Double {
+    private fun getFriendlinessCompatibility(friendliness1: String?, friendliness2: String?): Double {
+        if (friendliness1 == null || friendliness2 == null) return 0.5
         return when {
             friendliness1 == friendliness2 -> 1.0
             abs(friendlinessToNumber(friendliness1) - friendlinessToNumber(friendliness2)) == 1 -> 0.7

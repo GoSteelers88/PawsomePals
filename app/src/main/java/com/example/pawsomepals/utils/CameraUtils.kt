@@ -3,89 +3,129 @@ package com.example.pawsomepals.utils
 import android.Manifest
 import android.content.Context
 import android.net.Uri
-import android.os.Environment
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
-import androidx.core.content.FileProvider
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.app.ActivityCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import java.io.File
 
-// CameraState class
-class CameraState(
-    private val context: Context,
-    private val imageHandler: ImageHandler,
-    val onPhotoTaken: (Uri) -> Unit
-) {
-    private var currentPhotoUri: Uri? = null
-
-    fun getNewPhotoUri(): Uri {
-        val tempFile = File.createTempFile(
-            "JPEG_${System.currentTimeMillis()}_",
-            ".jpg",
-            context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
-        ).apply {
-            deleteOnExit()
-        }
-
-        currentPhotoUri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            tempFile
-        )
-
-        return currentPhotoUri!!
-    }
-
-    fun handlePhotoTaken(success: Boolean) {
-        if (success && currentPhotoUri != null) {
-            onPhotoTaken(currentPhotoUri!!)
-        }
-    }
-}
-
-// CameraPermissionState class
 class CameraPermissionState {
     var permissionGranted by mutableStateOf(false)
         private set
 
-    fun handlePermissionResult(granted: Boolean) {
+    var shouldShowRationale by mutableStateOf(false)
+        private set
+
+    fun handlePermissionResult(granted: Boolean, shouldShowRationale: Boolean = false) {
         permissionGranted = granted
+        this.shouldShowRationale = shouldShowRationale
+    }
+
+    companion object {
+        fun create(context: Context): CameraPermissionState {
+            return CameraPermissionState().apply {
+                handlePermissionResult(
+                    granted = ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.CAMERA
+                    ) == PackageManager.PERMISSION_GRANTED
+                )
+            }
+        }
     }
 }
 
-// Composable functions
+class CameraState(
+    private val context: Context,
+    private val imageHandler: ImageHandler,
+    private val onPhotoTaken: suspend (Uri) -> Unit,
+    private val isProfile: Boolean = false
+) {
+    private var currentPhotoUri: Uri? = null
+    private var photoFile: File? = null
+
+    suspend fun preparePhotoCapture(): Uri {
+        val (file, uri) = imageHandler.createImageFile(isProfile)
+        photoFile = file
+        currentPhotoUri = uri
+        return uri
+    }
+
+    suspend fun handlePhotoTaken(success: Boolean) {
+        if (success && currentPhotoUri != null) {
+            try {
+                val processedUri = imageHandler.processImage(currentPhotoUri!!, isProfile)
+                onPhotoTaken(processedUri)
+            } catch (e: Exception) {
+                Log.e("CameraState", "Error processing photo", e)
+                throw e
+            } finally {
+                photoFile?.delete()
+            }
+        }
+    }
+
+    fun cleanup() {
+        photoFile?.delete()
+        currentPhotoUri = null
+    }
+}
+
 @Composable
 fun rememberCameraState(
     context: Context,
     imageHandler: ImageHandler,
-    onPhotoTaken: (Uri) -> Unit
+    onPhotoTaken: suspend (Uri) -> Unit,
+    isProfile: Boolean = false
 ): CameraState {
-    return remember(context, imageHandler, onPhotoTaken) {
-        CameraState(context, imageHandler, onPhotoTaken)
+    val cameraState = remember(context, imageHandler, onPhotoTaken, isProfile) {
+        CameraState(context, imageHandler, onPhotoTaken, isProfile)
     }
+
+    DisposableEffect(cameraState) {
+        onDispose {
+            cameraState.cleanup()
+        }
+    }
+
+    return cameraState
 }
 
 @Composable
-fun rememberCameraPermissionState(): CameraPermissionState {
-    return remember { CameraPermissionState() }
+fun rememberCameraPermissionState(context: Context): CameraPermissionState {
+    return remember(context) {
+        CameraPermissionState.create(context)
+    }
 }
 
 @Composable
 fun rememberCameraLaunchers(
     cameraState: CameraState,
     permissionState: CameraPermissionState,
+    scope: CoroutineScope,
     onDenied: () -> Unit = {},
-    onShowRationale: () -> Unit = {}
+    onError: (String) -> Unit = {}
 ): Pair<ActivityResultLauncher<String>, ActivityResultLauncher<Uri>> {
+    val context = LocalContext.current
+
     // Permission launcher
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
-        permissionState.handlePermissionResult(isGranted)
-        when {
-            isGranted -> { /* Permission granted, camera can be launched */ }
-            else -> onDenied()
+        val shouldShowRationale = !isGranted && ActivityCompat.shouldShowRequestPermissionRationale(
+            context as androidx.activity.ComponentActivity,
+            Manifest.permission.CAMERA
+        )
+        permissionState.handlePermissionResult(isGranted, shouldShowRationale)
+        if (!isGranted) {
+            onDenied()
         }
     }
 
@@ -93,17 +133,37 @@ fun rememberCameraLaunchers(
     val cameraLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.TakePicture()
     ) { success ->
-        cameraState.handlePhotoTaken(success)
+        scope.launch {
+            try {
+                cameraState.handlePhotoTaken(success)
+            } catch (e: Exception) {
+                onError("Failed to process photo: ${e.message}")
+            }
+        }
     }
 
     return Pair(permissionLauncher, cameraLauncher)
 }
 
 @Composable
-fun rememberGalleryLauncher(onImageSelected: (Uri) -> Unit): ActivityResultLauncher<String> {
+fun rememberGalleryLauncher(
+    scope: CoroutineScope,
+    imageHandler: ImageHandler,
+    onImageSelected: suspend (Uri) -> Unit,
+    isProfile: Boolean = false
+): ActivityResultLauncher<String> {
     return rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        uri?.let { onImageSelected(it) }
+        uri?.let {
+            scope.launch {
+                try {
+                    val processedUri = imageHandler.processImage(it, isProfile)
+                    onImageSelected(processedUri)
+                } catch (e: Exception) {
+                    Log.e("GalleryLauncher", "Error processing image", e)
+                }
+            }
+        }
     }
 }

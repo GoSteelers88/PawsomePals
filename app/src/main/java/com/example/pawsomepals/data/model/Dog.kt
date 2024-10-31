@@ -2,6 +2,7 @@ package com.example.pawsomepals.data.model
 
 import androidx.room.*
 import com.google.firebase.database.IgnoreExtraProperties
+import com.google.firebase.database.PropertyName
 
 @IgnoreExtraProperties
 @Entity(
@@ -28,7 +29,8 @@ data class Dog(
     var energyLevel: String = "",
     var friendliness: String = "",
     var profilePictureUrl: String? = null,
-    var isSpayedNeutered: String? = null,
+    @PropertyName("isSpayedNeutered")  // Add this annotation
+var isSpayedNeutered: String? = null,
     var friendlyWithDogs: String? = null,
     var friendlyWithChildren: String? = null,
     var specialNeeds: String? = null,
@@ -39,6 +41,7 @@ data class Dog(
     var trainingCertifications: String? = null,
     var latitude: Double? = null,
     var longitude: Double? = null,
+    @field:JvmField
     val photoUrls: List<String?> = List(6) { null },
     var trainability: String? = null,
     var friendlyWithStrangers: String? = null,

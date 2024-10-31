@@ -33,6 +33,7 @@ import com.example.pawsomepals.utils.ImageHandler
 import com.example.pawsomepals.utils.NetworkUtils
 import com.example.pawsomepals.utils.RecaptchaManager
 import com.example.pawsomepals.viewmodel.DogProfileViewModel
+import com.example.pawsomepals.viewmodel.PhotoManagementViewModel
 import com.example.pawsomepals.viewmodel.ViewModelFactory
 import com.facebook.CallbackManager
 import com.google.android.gms.auth.api.signin.GoogleSignIn
@@ -94,7 +95,8 @@ object AppModule {
             photoRepository: PhotoRepository,
             firebaseAuth: FirebaseAuth,
             storage: FirebaseStorage,
-            dataManager: DataManager
+            dataManager: DataManager,
+            matchingService: MatchingService  // Added this parameter
         ): DogProfileViewModel {
             return DogProfileViewModel(
                 dogProfileRepository,
@@ -102,7 +104,8 @@ object AppModule {
                 photoRepository,
                 firebaseAuth,
                 storage,
-                dataManager
+                dataManager,
+                matchingService  // Added to constructor
             )
         }
     }
@@ -170,10 +173,22 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun providePhotoRepository(photoApi: PhotoApi, photoDao: PhotoDao): PhotoRepository {
-        return PhotoRepository(photoApi, photoDao)
+    fun providePhotoRepository(
+        photoApi: PhotoApi,
+        photoDao: PhotoDao,
+        storage: FirebaseStorage  // Add FirebaseStorage parameter
+    ): PhotoRepository {
+        return PhotoRepository(photoApi, photoDao, storage)
     }
 
+    @Provides
+    @Singleton
+    fun providePhotoManagementViewModel(
+        photoRepository: PhotoRepository,
+        auth: FirebaseAuth
+    ): PhotoManagementViewModel {
+        return PhotoManagementViewModel(photoRepository, auth)
+    }
     @Provides
     @Singleton
     fun provideQuestionRepository(db: AppDatabase, firestore: FirebaseFirestore): QuestionRepository {

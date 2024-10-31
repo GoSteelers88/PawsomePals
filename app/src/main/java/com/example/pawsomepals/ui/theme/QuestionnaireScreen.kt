@@ -36,7 +36,7 @@ fun QuestionnaireScreen(
     viewModel: QuestionnaireViewModel,
     userId: String,
     dogId: String?,
-    onComplete: (Any?) -> Unit,
+    onComplete: (Map<String, String>) -> Unit,  // Changed type to Map<String, String>
     onExit: () -> Unit
 ) {
     // State Management
@@ -47,6 +47,8 @@ fun QuestionnaireScreen(
     var showExitConfirmDialog by remember { mutableStateOf(false) }
     var showErrorDialog by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
+    var hasCalledOnComplete by remember { mutableStateOf(false) }
+
 
     // Collect ViewModel States
     val isSubmitting by viewModel.isSubmitting.collectAsState()
@@ -80,15 +82,31 @@ fun QuestionnaireScreen(
     // Effects
     LaunchedEffect(dogId) {
         if (dogId != null) {
-            viewModel.loadQuestionnaireResponses(userId, dogId)
+            try {
+                // Load existing dog profile data
+                viewModel.loadExistingDogProfile(dogId)
+
+                // Wait for responses to be loaded
+                viewModel.questionnaireResponses.collect { responses ->
+                    if (responses.isNotEmpty()) {
+                        answers = responses
+                        // Find the first question that matches each loaded answer
+                        allQuestions.forEachIndexed { index, question ->
+                            if (responses.containsKey(question.id)) {
+                                currentQuestionIndex = index
+                                return@collect
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("QuestionnaireScreen", "Error loading dog profile", e)
+                viewModel.setErrorMessage("Failed to load dog profile: ${e.message}")
+            }
         }
     }
 
-    LaunchedEffect(questionnaireResponses) {
-        if (questionnaireResponses.isNotEmpty()) {
-            answers = questionnaireResponses
-        }
-    }
+
 
     LaunchedEffect(error) {
         if (error != null) {
@@ -99,10 +117,14 @@ fun QuestionnaireScreen(
     }
 
     LaunchedEffect(completionStatus) {
-        if (completionStatus) {
+        if (completionStatus && !hasCalledOnComplete) {
             showCelebration = true
+            delay(3000) // Wait for celebration animation
+            hasCalledOnComplete = true
+            onComplete(answers)
         }
     }
+
 
     // Back Handler
     BackHandler {
@@ -128,9 +150,8 @@ fun QuestionnaireScreen(
                 Log.d("QuestionnaireScreen", "Final question reached. Saving responses...")
                 scope.launch {
                     try {
-                        onComplete(answers)
-                        showCelebration = true
-                        Log.d("QuestionnaireScreen", "Celebration triggered")
+                        viewModel.saveQuestionnaireResponses(userId, dogId, answers)
+                        Log.d("QuestionnaireScreen", "Responses saved successfully")
                     } catch (e: Exception) {
                         Log.e("QuestionnaireScreen", "Error in completion flow", e)
                         viewModel.setErrorMessage("Failed to complete: ${e.message}")
@@ -139,6 +160,15 @@ fun QuestionnaireScreen(
             }
         } else {
             viewModel.setErrorMessage("Please provide a valid answer before continuing")
+        }
+    }
+
+    // Back handler
+    BackHandler {
+        if (currentQuestionIndex > 0) {
+            currentQuestionIndex--
+        } else {
+            showExitConfirmDialog = true
         }
     }
 
@@ -169,8 +199,15 @@ fun QuestionnaireScreen(
             }
 
             QuestionnaireContent(
-                currentProgress = currentProgress,
-                progress = progress,
+                currentProgress = QuestionProgress(
+                    categoryIndex = questionnaireCategories.indexOfFirst { it.questions.contains(currentQuestion) },
+                    questionIndex = currentQuestionIndex,
+                    totalQuestions = allQuestions.size,
+                    categoryName = questionnaireCategories[questionnaireCategories.indexOfFirst {
+                        it.questions.contains(currentQuestion)
+                    }].name
+                ),
+                progress = (currentQuestionIndex + 1).toFloat() / allQuestions.size,
                 currentQuestion = currentQuestion,
                 answers = answers,
                 onAnswerSelected = { answer ->
@@ -198,10 +235,6 @@ fun QuestionnaireScreen(
     if (showCelebration) {
         CelebrationOverlay {
             showCelebration = false
-            scope.launch {
-                delay(500)
-                onComplete(answers)
-            }
         }
     }
 
