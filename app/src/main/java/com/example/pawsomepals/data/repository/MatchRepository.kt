@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.pawsomepals.data.model.Match
 import com.example.pawsomepals.data.model.Dog
 import com.example.pawsomepals.data.model.ResultWrapper
+import com.example.pawsomepals.data.model.Swipe
 import com.example.pawsomepals.service.MatchingService
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
@@ -54,6 +55,49 @@ class MatchRepository @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Error adding dislike", e)
             ResultWrapper.Error(e)
+        }
+    }
+    // Add these new methods to MatchRepository
+
+    suspend fun addSwipe(swipe: Swipe) {
+        try {
+            if (swipe.isLike) {
+                addLike(swipe.swipedDogId)
+            } else {
+                addDislike(swipe.swipedDogId)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error adding swipe", e)
+            throw e
+        }
+    }
+
+    suspend fun createMatch(match: Match) {
+        try {
+            firestore.collection(COLLECTION_MATCHES)
+                .document(match.id)
+                .set(match)
+                .await()
+            Log.d(TAG, "Created match: ${match.id}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error creating match", e)
+            throw e
+        }
+    }
+
+    fun getActiveMatches(): Flow<List<Match>> = flow {
+        try {
+            val matchesQuery = firestore.collection(COLLECTION_MATCHES)
+                .whereEqualTo("user1Id", userId)
+                .whereEqualTo("status", "ACTIVE")
+                .get()
+                .await()
+
+            val matches = matchesQuery.toObjects(Match::class.java)
+            emit(matches)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting active matches", e)
+            emit(emptyList())
         }
     }
 

@@ -8,6 +8,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.pawsomepals.data.model.Dog
+import com.example.pawsomepals.data.model.SwipeDirection
 import com.example.pawsomepals.ui.components.common.LoadingScreen
 import com.example.pawsomepals.ui.components.swiping.*
 import com.example.pawsomepals.ui.components.location.*
@@ -85,7 +86,7 @@ private fun SwipingScreenContent(
     uiState: SwipingViewModel.SwipingUIState,
     onRequestPermission: () -> Unit,
     onOpenSettings: () -> Unit,
-    onSwipeWithCompatibility: (String, Boolean) -> Unit,
+    onSwipeWithCompatibility: (String, SwipeDirection) -> Unit,  // Updated parameter type
     onDismissMatch: () -> Unit,
     onSchedulePlaydate: (String) -> Unit
 ) {
@@ -107,7 +108,9 @@ private fun SwipingScreenContent(
                 compatibilityState = compatibilityState,
                 currentMatchDetail = currentMatchDetail,
                 uiState = uiState,
-                onSwipeWithCompatibility = onSwipeWithCompatibility,
+                onSwipeWithCompatibility = { dogId, isLike ->  // Convert boolean to SwipeDirection
+                    onSwipeWithCompatibility(dogId, if (isLike) SwipeDirection.RIGHT else SwipeDirection.LEFT)
+                },
                 onDismissMatch = onDismissMatch,
                 onSchedulePlaydate = onSchedulePlaydate
             )

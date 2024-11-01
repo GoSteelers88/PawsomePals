@@ -52,7 +52,19 @@ class AppContainer(private val context: Context) {
         LocationService(context, LocationServices.getFusedLocationProviderClient(context))
     }
 
-    val matchingService: MatchingService by lazy { MatchingService(locationService) }
+    val matchPreferences: MatchingService.MatchPreferences by lazy {
+        MatchingService.MatchPreferences(
+            maxDistance = 50.0,
+            minCompatibilityScore = 0.4,
+            prioritizeEnergy = false,
+            prioritizeAge = false,
+            prioritizeBreed = false
+        )
+    }
+
+    val matchingService: MatchingService by lazy {
+        MatchingService(locationService, matchPreferences)
+    }
 
     val notificationManager: NotificationManager by lazy { NotificationManager(context) }
 

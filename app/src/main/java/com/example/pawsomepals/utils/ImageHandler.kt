@@ -20,16 +20,35 @@ import java.util.*
 import javax.inject.Inject
 import javax.inject.Singleton
 
-@Singleton
 class ImageHandler @Inject constructor(
     private val context: Context
 ) {
     companion object {
         private const val COMPRESSED_IMAGE_QUALITY = 80
         private const val MAX_IMAGE_DIMENSION = 1024
-        private const val CACHE_SIZE = 20 // Number of images to keep in memory
+        private const val CACHE_SIZE = 20
         private const val TEMP_FILE_MAX_AGE = 24 * 60 * 60 * 1000 // 24 hours
+
+        // Update directory constants
+        private const val PROFILE_PICTURES_DIR = "app_profile_pictures"
+        private const val DOG_PHOTOS_DIR = "app_dog_photos"
+        private const val TEMP_PHOTOS_DIR = "app_temp_photos"
     }
+
+    init {
+        createRequiredDirectories()
+    }
+
+    private fun createRequiredDirectories() {
+        // Create app-specific directories
+        File(context.filesDir, PROFILE_PICTURES_DIR).mkdirs()
+        File(context.filesDir, DOG_PHOTOS_DIR).mkdirs()
+        File(context.filesDir, TEMP_PHOTOS_DIR).mkdirs()
+
+        // Create cache directory
+        File(context.cacheDir, "image_cache").mkdirs()
+    }
+
 
     private val memoryCache = object : LruCache<String, Bitmap>(CACHE_SIZE) {
         override fun sizeOf(key: String, bitmap: Bitmap): Int {
@@ -102,13 +121,37 @@ class ImageHandler @Inject constructor(
 
     fun createImageFile(isProfile: Boolean = false): Pair<File, Uri> {
         val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val directory = if (isProfile) {
-            File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "profile_images")
-        } else {
-            File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "dog_images")
-        }.apply { mkdirs() }
+        val directory = File(
+            context.filesDir,
+            if (isProfile) PROFILE_PICTURES_DIR else DOG_PHOTOS_DIR
+        )
 
-        val imageFile = File(directory, "IMG_${timeStamp}.jpg")
+        // Ensure directory exists
+        directory.mkdirs()
+
+        val imageFile = File(
+            directory,
+            "${if (isProfile) "PROFILE" else "DOG"}_${timeStamp}.jpg"
+        )
+
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            imageFile
+        )
+
+        return Pair(imageFile, uri)
+    }
+
+    fun createTempImageFile(): Pair<File, Uri> {
+        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val directory = File(context.filesDir, TEMP_PHOTOS_DIR)
+
+        // Ensure directory exists
+        directory.mkdirs()
+
+        val imageFile = File(directory, "TEMP_${timeStamp}.jpg")
+
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -123,25 +166,23 @@ class ImageHandler @Inject constructor(
             try {
                 val currentTime = System.currentTimeMillis()
 
-                // Cleanup profile images
-                File(context.cacheDir, "profile_images").listFiles()?.forEach { file ->
-                    if (currentTime - file.lastModified() > TEMP_FILE_MAX_AGE) {
-                        file.delete()
-                    }
-                }
+                // Cleanup temp directory
+                context.getDir(TEMP_PHOTOS_DIR, Context.MODE_PRIVATE)
+                    .listFiles()
+                    ?.filter { currentTime - it.lastModified() > TEMP_FILE_MAX_AGE }
+                    ?.forEach { it.delete() }
 
-                // Cleanup dog images
-                File(context.cacheDir, "dog_images").listFiles()?.forEach { file ->
-                    if (currentTime - file.lastModified() > TEMP_FILE_MAX_AGE) {
-                        file.delete()
-                    }
-                }
+                // Cleanup cache
+                File(context.cacheDir, "image_cache")
+                    .listFiles()
+                    ?.filter { currentTime - it.lastModified() > TEMP_FILE_MAX_AGE }
+                    ?.forEach { it.delete() }
+
             } catch (e: Exception) {
                 Log.e("ImageHandler", "Error cleaning up temp files", e)
             }
         }
     }
-
     fun clearCache() {
         memoryCache.evictAll()
     }

@@ -210,14 +210,29 @@ class DogProfileRepository @Inject constructor(
             Result.failure(e)
         }
     }
+    suspend fun getDogById(dogId: String): Result<Dog> {
+        return try {
+            val snapshot = dogProfilesCollection.document(dogId).get().await()
+            val dog = snapshot.toObject(Dog::class.java)
+            if (dog != null) {
+                Result.success(dog)
+            } else {
+                Result.failure(NoSuchElementException("Dog not found"))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting dog by ID: $dogId", e)
+            Result.failure(e)
+        }
+    }
 
-    suspend fun getSwipingProfiles(): Result<List<Dog>> {
+    suspend fun getSwipingProfiles(batchSize: Int = 20): Result<List<Dog>> {
         return try {
             val currentUserId = userRepository.getCurrentUserId()
                 ?: throw IllegalStateException("No current user")
 
             val snapshot = dogProfilesCollection
                 .whereNotEqualTo("ownerId", currentUserId)
+                .limit(batchSize.toLong())  // Add limit
                 .get()
                 .await()
 

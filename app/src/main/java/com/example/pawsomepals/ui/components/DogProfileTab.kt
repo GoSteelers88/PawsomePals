@@ -4,6 +4,8 @@ import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 
 import android.content.pm.PackageManager
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.ManagedActivityResultLauncher
@@ -49,7 +51,6 @@ fun DogProfileTab(
     galleryLauncher: ManagedActivityResultLauncher<String, Uri?>,
     onNavigateToAddDog: () -> Unit
 ) {
-    // Add state for selected dog ID
     var selectedDogId by remember { mutableStateOf<String?>(null) }
     val userDogs by dogProfileViewModel.userDogs.collectAsStateWithLifecycle()
 
@@ -61,7 +62,7 @@ fun DogProfileTab(
         }
     }
 
-    // Update DogProfileList to handle ID selection
+    // Add this call to DogProfileList
     DogProfileList(
         dogs = userDogs,
         selectedDogId = selectedDogId,
@@ -76,44 +77,49 @@ fun DogProfileTab(
     )
 }
 
+
+
 @Composable
-private fun DogProfileList(
-    dogs: List<Dog>,
-    selectedDogId: String?,
-    onDogSelected: (String) -> Unit,
-    viewModel: ProfileViewModel,
-    cameraLauncher: ManagedActivityResultLauncher<Uri, Boolean>,
-    galleryLauncher: ManagedActivityResultLauncher<String, Uri?>,
-    onNavigateToAddDog: () -> Unit
-) {
-    Column {
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(vertical = 8.dp)
-        ) {
-            items(dogs) { dog ->
-                DogSelectorItem(
-                    dog = dog,
-                    isSelected = dog.id == selectedDogId,
-                    onClick = { onDogSelected(dog.id) }
+    private fun DogProfileList(
+        dogs: List<Dog>,
+        selectedDogId: String?,
+        onDogSelected: (String) -> Unit,
+        viewModel: ProfileViewModel,
+        cameraLauncher: ManagedActivityResultLauncher<Uri, Boolean>,
+        galleryLauncher: ManagedActivityResultLauncher<String, Uri?>,
+        onNavigateToAddDog: () -> Unit
+    ) {
+        Column {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(vertical = 8.dp)
+            ) {
+                items(dogs) { dog ->
+                    DogSelectorItem(
+                        dog = dog,
+                        isSelected = dog.id == selectedDogId,
+                        onClick = { onDogSelected(dog.id) }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Only show selected dog's profile with all required parameters
+            dogs.find { it.id == selectedDogId }?.let { selectedDog ->
+                DogProfileContent(
+                    dog = selectedDog,
+                    questionnaireResponses = viewModel.questionnaireResponses
+                        .collectAsStateWithLifecycle()
+                        .value
+                        .getOrDefault(selectedDog.id, emptyMap()),
+                    cameraLauncher = cameraLauncher,  // Add this
+                    galleryLauncher = galleryLauncher,  // Add this
+                    viewModel = viewModel  // Add this
                 )
             }
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Only show selected dog's profile
-        dogs.find { it.id == selectedDogId }?.let { selectedDog ->
-            DogProfileContent(
-                dog = selectedDog,
-                questionnaireResponses = viewModel.questionnaireResponses
-                    .collectAsStateWithLifecycle()
-                    .value
-                    .getOrDefault(selectedDog.id, emptyMap())
-            )
-        }
     }
-}
 
 @Composable
 private fun DogSelectorItem(dog: Dog, isSelected: Boolean, onClick: () -> Unit) {
@@ -139,35 +145,277 @@ private fun DogSelectorItem(dog: Dog, isSelected: Boolean, onClick: () -> Unit) 
 @Composable
 private fun DogProfileContent(
     dog: Dog,
-    questionnaireResponses: Map<String, String> = emptyMap()
+    questionnaireResponses: Map<String, String> = emptyMap(),
+    cameraLauncher: ManagedActivityResultLauncher<Uri, Boolean>,
+    galleryLauncher: ManagedActivityResultLauncher<String, Uri?>,
+    viewModel: ProfileViewModel
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp)
+        contentPadding = PaddingValues(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        item { DogBasicInfoSection(dog) }
-        item { Spacer(modifier = Modifier.height(16.dp)) }
-        item { DogPersonalitySection(dog, questionnaireResponses) }
-        item { Spacer(modifier = Modifier.height(16.dp)) }
-        item { DogSocialCompatibilitySection(dog, questionnaireResponses) }
-        item { Spacer(modifier = Modifier.height(16.dp)) }
-        item { DogCareInfoSection(dog, questionnaireResponses) }
-        item { Spacer(modifier = Modifier.height(16.dp)) }
-        item { DogPreferencesSection(dog) }
-        item { Spacer(modifier = Modifier.height(16.dp)) }
-        item { DogAdditionalInfoSection(dog) }
-        item { Spacer(modifier = Modifier.height(16.dp)) }
-        item { DogPersonalityTraitsStats(dog) }
-        item { Spacer(modifier = Modifier.height(16.dp)) }
-        item { DogSocialCompatibilityStats(dog) }
-        item { Spacer(modifier = Modifier.height(16.dp)) }
-        item { DogCareRequirementsStats(dog) }
-        item { Spacer(modifier = Modifier.height(16.dp)) }
-        item { DogHealthInformation(dog) }
+        // Profile Photo Section
+        item {
+            DogProfileWithPhoto(
+                dog = dog,
+                cameraLauncher = cameraLauncher,
+                galleryLauncher = galleryLauncher,
+                viewModel = viewModel
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+
+        // Basic Information
+        item {
+            Column {
+                DogBasicInfoSection(dog)
+                Spacer(modifier = Modifier.height(16.dp))
+                DogPersonalitySection(dog, questionnaireResponses)
+            }
+        }
+
+        // Social & Behavioral Information
+        item {
+            Column {
+                Spacer(modifier = Modifier.height(16.dp))
+                DogSocialCompatibilitySection(dog, questionnaireResponses)
+                Spacer(modifier = Modifier.height(16.dp))
+                DogCareInfoSection(dog, questionnaireResponses)
+            }
+        }
+
+        // Preferences & Additional Info
+        item {
+            Column {
+                Spacer(modifier = Modifier.height(16.dp))
+                DogPreferencesSection(dog)
+                Spacer(modifier = Modifier.height(16.dp))
+                DogAdditionalInfoSection(dog)
+            }
+        }
+
+        // Statistics Section
+        item {
+            Column {
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                    ) {
+                        DogPersonalityTraitsStats(dog)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        DogSocialCompatibilityStats(dog)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        DogCareRequirementsStats(dog)
+                    }
+                }
+            }
+        }
+
+        // Health Information
+        item {
+            Column {
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                    ) {
+                        DogHealthInformation(dog)
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
     }
 }
+@Composable
+private fun DogProfileWithPhoto(
+    dog: Dog,
+    cameraLauncher: ManagedActivityResultLauncher<Uri, Boolean>,
+    galleryLauncher: ManagedActivityResultLauncher<String, Uri?>,
+    viewModel: ProfileViewModel
+) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var showPhotoOptions by remember { mutableStateOf(false) }
+    var tempPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    var isUpdatingPhoto by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }  // Add this line
 
-// Info Section Components
+
+    LaunchedEffect(dog.id) {
+        viewModel.setCurrentDog(dog.id)
+    }
+
+    // Error dialog
+    errorMessage?.let { error ->
+        AlertDialog(
+            onDismissRequest = { errorMessage = null },
+            title = { Text("Error") },
+            text = { Text(error) },
+            confirmButton = {
+                TextButton(onClick = { errorMessage = null }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
+    // Collect error state from ViewModel
+    LaunchedEffect(Unit) {
+        viewModel.error.collect { error ->
+            error?.let {
+                errorMessage = it
+                isUpdatingPhoto = false
+            }
+        }
+    }
+
+    val handleCameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { success ->
+        Log.d("DogProfileWithPhoto", "Camera result success: $success, URI: $tempPhotoUri")
+        if (success && tempPhotoUri != null) {
+            isUpdatingPhoto = true
+            coroutineScope.launch {
+                try {
+                    Log.d("DogProfileWithPhoto", "Starting photo update with URI: $tempPhotoUri")
+                    viewModel.updateDogProfilePicture(0, tempPhotoUri!!)
+                    Log.d("DogProfileWithPhoto", "Photo update completed")
+                } catch(e: Exception) {
+                    Log.e("DogProfileWithPhoto", "Error updating profile picture", e)
+                    errorMessage = e.message ?: "Failed to update profile picture"
+                } finally {
+                    isUpdatingPhoto = false
+                }
+            }
+        }
+    }
+
+    val handleGalleryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            isUpdatingPhoto = true
+            coroutineScope.launch {
+                try {
+                    viewModel.updateDogProfilePicture(0, it)
+                } catch(e: Exception) {
+                    Log.e("DogProfileWithPhoto", "Error updating profile picture", e)
+                    errorMessage = e.message ?: "Failed to update profile picture"
+                } finally {
+                    isUpdatingPhoto = false
+                }
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(160.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            AsyncImage(
+                model = if (dog.photoUrls.isNotEmpty()) dog.photoUrls[0] else R.drawable.ic_dog_placeholder,
+                contentDescription = "Dog profile picture",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+
+            IconButton(
+                onClick = { showPhotoOptions = true },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+                    .size(40.dp)
+                    .background(
+                        color = MaterialTheme.colorScheme.primary,
+                        shape = CircleShape
+                    )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "Change photo",
+                    tint = MaterialTheme.colorScheme.onPrimary
+                )
+            }
+        }
+
+        if (isUpdatingPhoto) {
+            CircularProgressIndicator(
+                modifier = Modifier.padding(8.dp)
+            )
+        }
+
+        if (showPhotoOptions) {
+            AlertDialog(
+                onDismissRequest = { showPhotoOptions = false },
+                title = { Text("Change Profile Picture") },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = {
+                                Log.d("DogProfileWithPhoto", "Taking new photo")
+                                tempPhotoUri = viewModel.getOutputFileUri(isProfile = false)
+                                Log.d("DogProfileWithPhoto", "Created tempPhotoUri: $tempPhotoUri")
+                                tempPhotoUri?.let { uri ->
+                                    handleCameraLauncher.launch(uri)
+                                }
+                                showPhotoOptions = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Take Photo")
+                        }
+
+                        FilledTonalButton(
+                            onClick = {
+                                handleGalleryLauncher.launch("image/*")
+                                showPhotoOptions = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Choose from Gallery")
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { showPhotoOptions = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+    }
+}
 @Composable
 private fun DogBasicInfoSection(dog: Dog) {
     SharedProfileSection("Basic Info") {
@@ -355,7 +603,7 @@ private fun DogGalleryContent(
         ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
         if (isGranted) {
-            val photoUri = viewModel.getOutputFileUri(context)
+            val photoUri = viewModel.getOutputFileUri(isProfile = false) // Updated this line
             cameraLauncher.launch(photoUri)
         }
     }
@@ -366,7 +614,7 @@ private fun DogGalleryContent(
                 context,
                 Manifest.permission.CAMERA
             ) == PackageManager.PERMISSION_GRANTED -> {
-                val photoUri = viewModel.getOutputFileUri(context)
+                val photoUri = viewModel.getOutputFileUri(isProfile = false) // Updated this line
                 cameraLauncher.launch(photoUri)
             }
             else -> {

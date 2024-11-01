@@ -1,4 +1,4 @@
-package com.example.pawsomepals.ui.handlers
+package com.example.pawsomepals.ui
 
 import android.net.Uri
 import androidx.compose.runtime.getValue

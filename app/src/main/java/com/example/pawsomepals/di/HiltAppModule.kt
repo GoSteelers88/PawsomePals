@@ -29,6 +29,7 @@ import com.example.pawsomepals.service.LocationService
 import com.example.pawsomepals.service.LocationSuggestionService
 import com.example.pawsomepals.service.MatchingService
 import com.example.pawsomepals.subscription.SubscriptionManager
+import com.example.pawsomepals.utils.CameraUtils
 import com.example.pawsomepals.utils.ImageHandler
 import com.example.pawsomepals.utils.NetworkUtils
 import com.example.pawsomepals.utils.RecaptchaManager
@@ -171,6 +172,27 @@ object AppModule {
         return appDatabase.photoDao()
     }
 
+    @Module
+    @InstallIn(SingletonComponent::class)
+    object ImageModule {
+        @Provides
+        @Singleton
+        fun provideImageHandler(@ApplicationContext context: Context): ImageHandler {
+            return ImageHandler(context)
+        }
+    }
+
+    @Module
+    @InstallIn(SingletonComponent::class)
+    object CameraModule {
+        @Provides
+        @Singleton
+        fun provideCameraUtils(@ApplicationContext context: Context): CameraUtils {
+            return CameraUtils(context)
+        }
+    }
+
+
     @Provides
     @Singleton
     fun providePhotoRepository(
@@ -228,14 +250,32 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideLocationService(@ApplicationContext context: Context, fusedLocationClient: FusedLocationProviderClient): LocationService {
+    fun provideMatchPreferences(): MatchingService.MatchPreferences {
+        return MatchingService.MatchPreferences(
+            maxDistance = 50.0,
+            minCompatibilityScore = 0.4,
+            prioritizeEnergy = false,
+            prioritizeAge = false,
+            prioritizeBreed = false
+        )
+    }
+
+    @Provides
+    @Singleton
+    fun provideLocationService(
+        @ApplicationContext context: Context,
+        fusedLocationClient: FusedLocationProviderClient
+    ): LocationService {
         return LocationService(context, fusedLocationClient)
     }
 
     @Provides
     @Singleton
-    fun provideMatchingService(locationService: LocationService): MatchingService {
-        return MatchingService(locationService)
+    fun provideMatchingService(
+        locationService: LocationService,
+        matchPreferences: MatchingService.MatchPreferences
+    ): MatchingService {
+        return MatchingService(locationService, matchPreferences)
     }
 
     @Provides
@@ -279,7 +319,9 @@ object AppModule {
         @ApplicationContext context: Context,
         questionRepository: QuestionRepository,
         imageHandler: ImageHandler,
-        networkUtils: NetworkUtils  // Added missing parameter
+        networkUtils: NetworkUtils,
+        locationService: LocationService,  // Add this
+        matchingService: MatchingService   // Add this
     ): DataManager {
         return DataManager(
             appDatabase = appDatabase,
@@ -289,7 +331,9 @@ object AppModule {
             context = context,
             questionRepository = questionRepository,
             imageHandler = imageHandler,
-            networkUtils = networkUtils  // Added to constructor call
+            networkUtils = networkUtils,
+            locationService = locationService,  // Add this
+            matchingService = matchingService   // Add this
         )
     }
     @Provides
@@ -301,11 +345,7 @@ object AppModule {
 
 
 
-    @Provides
-    @Singleton
-    fun provideImageHandler(@ApplicationContext context: Context): ImageHandler {
-        return ImageHandler(context)
-    }
+
 
     @Provides
     fun provideSavedStateRegistryOwner(

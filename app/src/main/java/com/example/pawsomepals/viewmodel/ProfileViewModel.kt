@@ -31,7 +31,11 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import androidx.core.content.FileProvider
+import com.example.pawsomepals.utils.CameraUtils
+import com.example.pawsomepals.utils.ImageHandler
+import com.example.pawsomepals.utils.NetworkUtils
 import dagger.hilt.android.internal.Contexts.getApplication
+import kotlinx.coroutines.delay
 
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
@@ -40,7 +44,12 @@ class ProfileViewModel @Inject constructor(
     private val locationService: LocationService,
     private val storage: FirebaseStorage,
     private val dataManager: DataManager,
-    private val savedStateHandle: SavedStateHandle
+    private val savedStateHandle: SavedStateHandle,
+    private val imageHandler: ImageHandler, // Replace cameraUtils with imageHandler
+    private val networkUtils: NetworkUtils  // Add this
+
+
+
 ) : ViewModel() {
 
     // Companion object with constants
@@ -118,36 +127,17 @@ class ProfileViewModel @Inject constructor(
     }
 
 
-    fun getOutputFileUri(context: Context, fileType: FileType = FileType.TEMPORARY): Uri {
-        cleanupTempFiles(context)
-
-        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val directory = when (fileType) {
-            FileType.PROFILE -> context.getDir(PROFILE_PICTURES_DIR, Context.MODE_PRIVATE)
-            FileType.DOG -> context.getDir(DOG_PHOTOS_DIR, Context.MODE_PRIVATE)
-            FileType.TEMPORARY -> context.getDir(TEMP_PHOTOS_DIR, Context.MODE_PRIVATE)
-        }.apply {
-            if (!exists()) mkdirs()
+    fun getOutputFileUri(isProfile: Boolean = false): Uri {
+        return try {
+            imageHandler.createImageFile(isProfile).second
+        } catch (e: Exception) {
+            Log.e("ProfileViewModel", "Failed to create image file", e)
+            throw e
         }
-
-        val fileName = when (fileType) {
-            FileType.PROFILE -> "profile_${timeStamp}.jpg"
-            FileType.DOG -> "dog_${timeStamp}.jpg"
-            FileType.TEMPORARY -> "temp_${timeStamp}.jpg"
-        }
-
-        val photoFile = File(directory, fileName).apply {
-            if (fileType == FileType.TEMPORARY) {
-                deleteOnExit()
-            }
-        }
-
-        return FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            photoFile
-        )
     }
+
+
+
     fun setCurrentDog(dogId: String) {
         viewModelScope.launch {
             try {
@@ -175,54 +165,46 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 _isLoading.value = true
-                val user =
-                    auth.currentUser ?: throw IllegalStateException("User not authenticated")
 
+                // Process image using imageHandler
+                val processedUri = imageHandler.processImage(uri, isProfile = true)
+
+                val user = auth.currentUser ?: throw IllegalStateException("User not authenticated")
                 val storageRef = storage.reference
-                    .child(PROFILE_PICTURES_DIR)
+                    .child("profile_pictures")
                     .child(user.uid)
                     .child("profile_${System.currentTimeMillis()}.jpg")
 
-                storageRef.putFile(uri)
-                    .addOnProgressListener { taskSnapshot ->
-                        val progress =
-                            (100.0 * taskSnapshot.bytesTransferred / taskSnapshot.totalByteCount)
-                        _uploadProgress.value = progress.toFloat() / 100f
-                    }
-                    .await()
+                val uploadTask = storageRef.putFile(processedUri)
+
+                uploadTask.addOnProgressListener { taskSnapshot ->
+                    val progress = (100.0 * taskSnapshot.bytesTransferred / taskSnapshot.totalByteCount)
+                    _uploadProgress.value = progress.toFloat() / 100f
+                }.await()
 
                 val downloadUrl = storageRef.downloadUrl.await().toString()
 
                 _userProfile.value?.let { currentUser ->
                     val updatedUser = currentUser.copy(profilePictureUrl = downloadUrl)
                     dataManager.updateUserProfile(updatedUser)
-                    _userProfile.value = updatedUser
+                    _userProfile.value = updatedUser // Make sure this is updating
                 }
 
             } catch (e: Exception) {
-                Log.e("ProfileViewModel", "Error updating profile picture", e)
                 _error.value = "Failed to update profile picture: ${e.message}"
             } finally {
                 _isLoading.value = false
                 _uploadProgress.value = 0f
+                imageHandler.cleanupTempFiles()
             }
+        }
+    }
+    fun cleanupTempFiles() {
+        viewModelScope.launch {
+            imageHandler.cleanupTempFiles()
         }
     }
 
-    fun cleanupTempFiles(context: Context) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val tempDir = context.getDir(TEMP_PHOTOS_DIR, Context.MODE_PRIVATE)
-                tempDir.listFiles()?.forEach { file ->
-                    if (System.currentTimeMillis() - file.lastModified() > TEMP_FILE_MAX_AGE) {
-                        file.delete()
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("ProfileViewModel", "Error cleaning temp files: ${e.message}")
-            }
-        }
-    }
 
 
     private fun setupUserProfileListener(userId: String) {
@@ -484,34 +466,93 @@ class ProfileViewModel @Inject constructor(
             }
     }
 
-    fun updateDogProfilePicture(index: Int, uri: Uri) {
-        viewModelScope.launch {
-            try {
-                _isLoading.value = true
-                _dogProfile.value?.let { currentDog ->
-                    val downloadUrl =
-                        dataManager.updateDogProfilePicture(index, uri, currentDog.id)
+    suspend fun updateDogProfilePicture(index: Int, uri: Uri) {
+        try {
+            Log.d("ProfileViewModel", "Starting dog profile picture update. Index: $index, URI: $uri")
+            _isLoading.value = true
 
-                    val updatedPhotoUrls = currentDog.photoUrls.toMutableList()
-                    if (index < updatedPhotoUrls.size) {
-                        updatedPhotoUrls[index] = downloadUrl
-                    } else {
-                        updatedPhotoUrls.add(downloadUrl)
+            // Check network connectivity first
+            if (!networkUtils.isNetworkAvailable()) {
+                _error.value = "No internet connection. Please check your connection and try again."
+                return
+            }
+
+            val processedUri = imageHandler.processImage(uri, isProfile = false)
+            Log.d("ProfileViewModel", "Image processed. New URI: $processedUri")
+
+            val user = auth.currentUser ?: throw IllegalStateException("User not authenticated")
+            val dogId = _currentDog.value?.id ?: throw IllegalStateException("No dog selected")
+
+            // Retry logic for Firebase operations
+            var attempts = 0
+            val maxAttempts = 3
+            var lastException: Exception? = null
+
+            while (attempts < maxAttempts) {
+                try {
+                    val storageRef = storage.reference
+                        .child("dog_photos")
+                        .child(user.uid)
+                        .child(dogId)
+                        .child("profile_${System.currentTimeMillis()}.jpg")
+
+                    val uploadTask = storageRef.putFile(processedUri)
+
+                    uploadTask.addOnProgressListener { taskSnapshot ->
+                        val progress = (100.0 * taskSnapshot.bytesTransferred / taskSnapshot.totalByteCount)
+                        _uploadProgress.value = progress.toFloat() / 100f
+                    }.await()
+
+                    val downloadUrl = storageRef.downloadUrl.await().toString()
+                    Log.d("ProfileViewModel", "Download URL received: $downloadUrl")
+
+                    _currentDog.value?.let { currentDog ->
+                        val updatedPhotoUrls = currentDog.photoUrls.toMutableList()
+                        if (updatedPhotoUrls.isEmpty()) {
+                            updatedPhotoUrls.add(downloadUrl)
+                        } else if (index == 0) {
+                            updatedPhotoUrls[0] = downloadUrl
+                        } else if (index < updatedPhotoUrls.size) {
+                            updatedPhotoUrls[index] = downloadUrl
+                        } else {
+                            updatedPhotoUrls.add(downloadUrl)
+                        }
+
+                        val updatedDog = currentDog.copy(
+                            photoUrls = updatedPhotoUrls,
+                            profilePictureUrl = downloadUrl // Set the first photo as profile picture
+                        )
+
+                        dataManager.createOrUpdateDogProfile(updatedDog)
+                        _currentDog.value = updatedDog
+
+                        // Update userDogs list
+                        val updatedDogs = _userDogs.value.map {
+                            if (it.id == updatedDog.id) updatedDog else it
+                        }
+                        _userDogs.value = updatedDogs
                     }
 
-                    val updatedDog = currentDog.copy(photoUrls = updatedPhotoUrls)
-                    dataManager.createOrUpdateDogProfile(updatedDog)
+                    // If we get here, the operation was successful
+                    break
+                } catch (e: Exception) {
+                    lastException = e
+                    attempts++
+                    if (attempts == maxAttempts) {
+                        throw e
+                    }
+                    delay(1000L * attempts) // Exponential backoff
                 }
-            } catch (e: Exception) {
-                Log.e("ProfileViewModel", "Error updating dog profile picture: ${e.message}")
-                _error.value = "Failed to update dog profile picture: ${e.message}"
-            } finally {
-                _isLoading.value = false
             }
+        } catch (e: Exception) {
+            Log.e("ProfileViewModel", "Error updating dog profile picture", e)
+            _error.value = "Failed to update profile picture: ${e.message}"
+        } finally {
+            _isLoading.value = false
+            _uploadProgress.value = 0f
+            imageHandler.cleanupTempFiles()
         }
     }
-
-
     override fun onCleared() {
         super.onCleared()
         viewModelScope.launch(Dispatchers.IO) {

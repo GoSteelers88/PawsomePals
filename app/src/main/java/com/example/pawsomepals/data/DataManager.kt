@@ -49,6 +49,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import java.util.UUID
 import kotlin.coroutines.cancellation.CancellationException
+import com.example.pawsomepals.data.model.Match
+import com.example.pawsomepals.data.model.MatchStatus
+import com.example.pawsomepals.data.model.Swipe
+import com.example.pawsomepals.service.LocationService
+import com.example.pawsomepals.service.MatchingService
 
 @Singleton
 class DataManager @Inject constructor(
@@ -59,12 +64,15 @@ class DataManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val imageHandler: ImageHandler,
     private val networkUtils: NetworkUtils,
-
+    private val locationService: LocationService,  // Add this
+    private val matchingService: MatchingService,
     private val questionRepository: QuestionRepository,
 
     ) {
     private val userDao = appDatabase.userDao()
     private val dogDao = appDatabase.dogDao()
+    private val matchDao = appDatabase.matchDao()
+    private val swipeDao = appDatabase.swipeDao()
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     // Add these new properties
@@ -73,6 +81,11 @@ class DataManager @Inject constructor(
     private var currentSyncJob: Job? = null
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+
+    private val matchCollection = firestore.collection("matches")
+    private val swipeCollection = firestore.collection("swipes")
+    private val dogCollection = firestore.collection("dogs")
+
 
 
     // Auth state management
@@ -264,6 +277,225 @@ class DataManager @Inject constructor(
         }
     }
 
+    suspend fun processSwipe(currentDogId: String, swipedDogId: String, isLike: Boolean) {
+        try {
+            ensureAuthenticated()
+            val currentUser = auth.currentUser!!
+
+            // Create swipe record
+            val swipe = Swipe(
+                swiperId = currentUser.uid,
+                swipedId = swipedDogId,
+                swiperDogId = currentDogId,
+                swipedDogId = swipedDogId,
+                isLike = isLike,
+                timestamp = System.currentTimeMillis()
+            )
+
+            // Save swipe to Firestore first
+            val swipeRef = swipeCollection.document()
+            swipe.id = swipeRef.id
+            swipeRef.set(swipe).await()
+
+            // If it's a like, check for match
+            if (isLike) {
+                checkForMatchOnline(swipe)
+            }
+
+            // Update local database after successful online operation
+            swipeDao.insertSwipe(swipe)
+
+        } catch (e: Exception) {
+            Log.e("DataManager", "Error processing swipe", e)
+            throw e
+        }
+    }
+    private suspend fun checkForMatchOnline(newSwipe: Swipe) {
+        try {
+            // Check for reciprocal swipe in Firestore
+            val reciprocalSwipes = swipeCollection
+                .whereEqualTo("swiperId", newSwipe.swipedId)
+                .whereEqualTo("swipedId", newSwipe.swiperId)
+                .whereEqualTo("isLike", true)
+                .get()
+                .await()
+
+            if (!reciprocalSwipes.isEmpty) {
+                // We have a match!
+                val reciprocalSwipe = reciprocalSwipes.documents.first().toObject(Swipe::class.java)!!
+                createMatchOnline(newSwipe, reciprocalSwipe)
+            }
+        } catch (e: Exception) {
+            Log.e("DataManager", "Error checking for match online", e)
+            throw e
+        }
+    }
+
+    private suspend fun createMatchOnline(swipe1: Swipe, swipe2: Swipe) {
+        try {
+            val dog1 = dogCollection.document(swipe1.swiperDogId).get().await().toObject(Dog::class.java)
+            val dog2 = dogCollection.document(swipe2.swiperDogId).get().await().toObject(Dog::class.java)
+
+            if (dog1 == null || dog2 == null) {
+                Log.e("DataManager", "Unable to find dogs for match creation")
+                return
+            }
+
+            // Calculate compatibility using MatchingService
+            val matchResult = matchingService.calculateMatch(dog1, dog2)
+
+            // Create match document with proper constructor
+            val match = Match(
+                id = UUID.randomUUID().toString(),
+                user1Id = swipe1.swiperId,
+                user2Id = swipe2.swiperId,
+                dog1Id = swipe1.swiperDogId,
+                dog2Id = swipe2.swiperDogId,
+                compatibilityScore = matchResult.compatibilityScore,
+                matchReasons = matchResult.reasons,
+                status = MatchStatus.PENDING,
+                timestamp = System.currentTimeMillis()
+            )
+
+            // Save to Firestore
+            matchCollection.document(match.id).set(match).await()
+
+            // Create chat room and send notifications
+            createChatRoomForMatch(match)
+            sendMatchNotifications(match)
+
+            // Update local database
+            matchDao.insertMatch(match)
+
+        } catch (e: Exception) {
+            Log.e("DataManager", "Error creating match online", e)
+            throw e
+        }
+    }
+
+    // Get potential matches from online source
+    suspend fun getOnlinePotentialMatches(dogId: String, limit: Int = 20): List<Dog> {
+        try {
+            ensureAuthenticated()
+            val currentDog = dogCollection.document(dogId).get().await().toObject(Dog::class.java)
+                ?: throw IllegalStateException("Current dog not found")
+
+            // Get already swiped profiles
+            val swipedProfiles = swipeCollection
+                .whereEqualTo("swiperId", currentDog.ownerId)
+                .get()
+                .await()
+                .toObjects(Swipe::class.java)
+                .map { it.swipedDogId }
+
+            // Query for potential matches
+            val potentialMatches = dogCollection
+                .whereNotEqualTo("id", dogId)
+                .whereNotEqualTo("ownerId", currentDog.ownerId)
+                .get()
+                .await()
+                .toObjects(Dog::class.java)
+                .filter { dog ->
+                    // Filter out already swiped profiles
+                    !swipedProfiles.contains(dog.id) &&
+                            // Filter by location if available
+                            isWithinMatchingDistance(currentDog, dog)
+                }
+                .take(limit)
+
+            return potentialMatches
+
+        } catch (e: Exception) {
+            Log.e("DataManager", "Error getting online potential matches", e)
+            throw e
+        }
+    }
+
+    // Get active matches from online source
+    fun observeOnlineMatches(dogId: String): Flow<List<Match>> = callbackFlow {
+        val listenerRegistration = matchCollection
+            .whereEqualTo("status", MatchStatus.ACTIVE)
+            .whereArrayContains("dogIds", dogId)
+            .addSnapshotListener { snapshot, e ->
+                if (e != null) {
+                    close(e)
+                    return@addSnapshotListener
+                }
+
+                if (snapshot != null) {
+                    val matches = snapshot.toObjects(Match::class.java)
+                    trySendBlocking(matches)
+                    // Update local database
+                    coroutineScope.launch {
+                        matches.forEach { matchDao.insertMatch(it) }
+                    }
+                }
+            }
+
+        awaitClose { listenerRegistration.remove() }
+    }
+
+    // Handle match responses
+    suspend fun respondToMatch(matchId: String, accepted: Boolean) {
+        try {
+            ensureAuthenticated()
+            val match = matchCollection.document(matchId).get().await().toObject(Match::class.java)
+                ?: throw IllegalStateException("Match not found")
+
+            val newStatus = if (accepted) MatchStatus.ACTIVE else MatchStatus.DECLINED
+
+            // Update Firestore
+            matchCollection.document(matchId)
+                .update(
+                    mapOf(
+                        "status" to newStatus,
+                        "lastInteractionTimestamp" to System.currentTimeMillis()
+                    )
+                )
+                .await()
+
+            // If accepted, create chat and send notifications
+            if (accepted) {
+                createChatRoomForMatch(match)
+                sendMatchNotifications(match)
+            }
+
+            // Update local database after successful online operation
+            matchDao.getMatchById(matchId)?.let { localMatch ->
+                matchDao.updateMatch(localMatch.copy(status = newStatus))
+            }
+
+        } catch (e: Exception) {
+            Log.e("DataManager", "Error responding to match", e)
+            throw e
+        }
+    }
+
+    private fun isWithinMatchingDistance(dog1: Dog, dog2: Dog): Boolean {
+        return try {
+            val lat1 = dog1.latitude ?: return false
+            val lon1 = dog1.longitude ?: return false
+            val lat2 = dog2.latitude ?: return false
+            val lon2 = dog2.longitude ?: return false
+
+            val distance = locationService.calculateDistance(lat1, lon1, lat2, lon2)
+            distance <= MatchingService.MAX_DISTANCE
+
+        } catch (e: Exception) {
+            Log.e("DataManager", "Error calculating match distance", e)
+            false
+        }
+    }
+
+    private suspend fun createChatRoomForMatch(match: Match) {
+        // Implement chat room creation logic here
+    }
+
+    private suspend fun sendMatchNotifications(match: Match) {
+        // Implement notification logic here
+    }
+
+
     private suspend fun getUserFromFirestore(userId: String): User? {
         return try {
             firestore.collection("users").document(userId).get().await().toObject(User::class.java)
@@ -346,7 +578,9 @@ class DataManager @Inject constructor(
         @ApplicationContext context: Context,
         questionRepository: QuestionRepository,
         imageHandler: ImageHandler,
-        networkUtils: NetworkUtils  // Added missing parameter
+        networkUtils: NetworkUtils,
+        locationService: LocationService,  // Added
+        matchingService: MatchingService   // Added
     ): DataManager {
         return DataManager(
             appDatabase = appDatabase,
@@ -356,7 +590,9 @@ class DataManager @Inject constructor(
             context = context,
             questionRepository = questionRepository,
             imageHandler = imageHandler,
-            networkUtils = networkUtils  // Added to constructor call
+            networkUtils = networkUtils,
+            locationService = locationService,  // Added
+            matchingService = matchingService   // Added
         )
     }
 
@@ -475,36 +711,42 @@ class DataManager @Inject constructor(
 
     suspend fun updateDogProfilePicture(index: Int, uri: Uri, dogId: String): String {
         return try {
-            val currentUser = auth.currentUser
-            if (currentUser != null) {
-                val imageRef =
-                    storage.reference.child("dog_images/${currentUser.uid}/${UUID.randomUUID()}")
-                val uploadTask = imageRef.putFile(uri).await()
-                val downloadUrl = uploadTask.storage.downloadUrl.await().toString()
+            val currentUser = auth.currentUser ?: throw IllegalStateException("User not authenticated")
+            val imageRef = storage.reference
+                .child("dog_images")
+                .child(currentUser.uid)
+                .child(dogId)
+                .child("photo_${index}_${System.currentTimeMillis()}.jpg")
 
-                val dog = dogDao.getDogById(dogId)
-                dog?.let {
-                    val updatedPhotoUrls = it.photoUrls.toMutableList()
-                    if (index < updatedPhotoUrls.size) {
-                        updatedPhotoUrls[index] = downloadUrl
-                    } else {
-                        updatedPhotoUrls.add(downloadUrl)
-                    }
-                    val updatedDog = it.copy(photoUrls = updatedPhotoUrls)
-                    createOrUpdateDogProfile(updatedDog)
-                }
+            val uploadTask = imageRef.putFile(uri).await()
+            val downloadUrl = uploadTask.storage.downloadUrl.await().toString()
 
-                downloadUrl
+            val dog = dogDao.getDogById(dogId) ?: throw IllegalStateException("Dog not found")
+            val updatedPhotoUrls = dog.photoUrls.toMutableList()
+
+            // If it's the first photo (index 0), clear the list and start fresh
+            if (index == 0) {
+                updatedPhotoUrls.clear()
+                updatedPhotoUrls.add(downloadUrl)
             } else {
-                Log.e("DataManager", "Unauthorized attempt to update dog profile picture")
-                throw IllegalStateException("Unauthorized attempt to update dog profile picture")
+                // For additional photos, add or update at the specific index
+                if (index < updatedPhotoUrls.size) {
+                    updatedPhotoUrls[index] = downloadUrl
+                } else {
+                    updatedPhotoUrls.add(downloadUrl)
+                }
             }
+
+            val updatedDog = dog.copy(photoUrls = updatedPhotoUrls)
+            createOrUpdateDogProfile(updatedDog)
+
+            Log.d("DataManager", "Updated dog photo URLs: $updatedPhotoUrls")
+            downloadUrl
         } catch (e: Exception) {
             Log.e("DataManager", "Error updating dog profile picture", e)
             throw e
         }
     }
-
     suspend fun saveQuestionnaireResponses(
         userId: String,
         dogId: String,

@@ -8,6 +8,7 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import com.example.pawsomepals.data.dao.ChatDao
 import com.example.pawsomepals.data.dao.DogDao
+import com.example.pawsomepals.data.dao.MatchDao
 import com.example.pawsomepals.data.dao.PhotoDao
 import com.example.pawsomepals.data.dao.PlaydateDao
 import com.example.pawsomepals.data.dao.QuestionDao
@@ -20,6 +21,7 @@ import com.example.pawsomepals.data.model.Dog
 import com.example.pawsomepals.data.model.IntListConverter
 import com.example.pawsomepals.data.model.LocalDateConverter
 import com.example.pawsomepals.data.model.LongListConverter
+import com.example.pawsomepals.data.model.Match
 import com.example.pawsomepals.data.model.Message
 import com.example.pawsomepals.data.model.PhotoEntity
 import com.example.pawsomepals.data.model.PlaydateRequest
@@ -43,9 +45,11 @@ import com.example.pawsomepals.data.model.User
         Chat::class,
         Message::class,
         Rating::class,
+        Match::class,
+
 
     ],
-    version = 24,
+    version = 25,
     exportSchema = true
 )
 @TypeConverters(IntListConverter::class, LongListConverter::class, LocalDateConverter::class, Converters::class)
@@ -59,6 +63,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun ratingDao(): RatingDao
     abstract fun settingsDao(): SettingsDao
     abstract fun swipeDao(): SwipeDao
+    abstract fun matchDao(): MatchDao
+
 
     companion object {
         @Volatile

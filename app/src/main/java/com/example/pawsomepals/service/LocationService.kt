@@ -6,14 +6,24 @@ import android.content.pm.PackageManager
 import android.location.Location
 import androidx.core.app.ActivityCompat
 import com.google.android.gms.location.FusedLocationProviderClient
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.suspendCancellableCoroutine
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlin.coroutines.resume
 
-class LocationService(
-    private val context: Context,
+@Singleton
+class LocationService @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val fusedLocationClient: FusedLocationProviderClient
 ) {
+    class LocationException(message: String) : Exception(message)
 
+
+
+    companion object {
+        private const val EARTH_RADIUS_KM = 6371.0
+    }
     suspend fun getCurrentLocation(): Location? = suspendCancellableCoroutine { continuation ->
         if (ActivityCompat.checkSelfPermission(
                 context,

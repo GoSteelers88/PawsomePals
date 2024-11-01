@@ -13,6 +13,8 @@ import com.example.pawsomepals.notification.NotificationManager
 import com.example.pawsomepals.service.LocationService
 import com.example.pawsomepals.service.LocationSuggestionService
 import com.example.pawsomepals.service.MatchingService
+import com.example.pawsomepals.utils.ImageHandler
+import com.example.pawsomepals.utils.NetworkUtils
 import com.example.pawsomepals.utils.RecaptchaManager
 import com.facebook.CallbackManager
 import com.google.firebase.storage.FirebaseStorage
@@ -38,6 +40,9 @@ class ViewModelFactory @AssistedInject constructor(
     private val googleAuthManager: GoogleAuthManager,
     private val storage: FirebaseStorage,
     private val dataManager: DataManager,
+    private val imageHandler: ImageHandler,
+    private val networkUtils: NetworkUtils,  // Add this
+
     @Assisted private val owner: ComponentActivity
 ) : AbstractSavedStateViewModelFactory(owner, null) {
 
@@ -54,7 +59,11 @@ class ViewModelFactory @AssistedInject constructor(
                     locationService = locationService,
                     storage = storage,
                     dataManager = dataManager,
-                    savedStateHandle = handle
+                    savedStateHandle = handle,
+                    imageHandler = imageHandler,
+                    networkUtils = networkUtils  // Add this
+
+
                 ) as T
             }
             else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")

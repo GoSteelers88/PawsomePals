@@ -16,6 +16,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import coil.compose.rememberAsyncImagePainter
 import com.example.pawsomepals.data.model.Dog
+import com.example.pawsomepals.data.model.MatchReason
 import com.example.pawsomepals.viewmodel.SwipingViewModel
 
 @Composable
@@ -112,7 +113,7 @@ fun MatchDialog(
                                     modifier = Modifier.padding(end = 8.dp)
                                 )
                                 Text(
-                                    text = reason,
+                                    text = reason.description,  // Use reason.description instead of reason directly
                                     style = MaterialTheme.typography.bodyLarge
                                 )
                             }
@@ -156,10 +157,12 @@ fun MatchDialogPreview() {
         ),
         compatibilityScore = 0.85,
         compatibilityReasons = listOf(
-            "Similar energy levels",
-            "Compatible sizes",
-            "Both love to play fetch"
-        )
+            MatchReason("ENERGY_MATCH", "Similar energy levels", 0.9),
+            MatchReason("SIZE_MATCH", "Compatible sizes", 0.8),
+            MatchReason("PLAY_STYLE_MATCH", "Both love to play fetch", 0.7)
+        ),
+        distance = 2.5,
+        warnings = emptyList()
     )
 
     MaterialTheme {

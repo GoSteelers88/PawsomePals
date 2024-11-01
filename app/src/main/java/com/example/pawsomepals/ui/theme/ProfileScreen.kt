@@ -63,7 +63,7 @@ fun ProfileScreen(
     ) { isGranted ->
         if (isGranted) {
             try {
-                tempPhotoUri = viewModel.getOutputFileUri(context)
+                tempPhotoUri = viewModel.getOutputFileUri(isProfile = true)  // Updated this line
                 tempPhotoUri?.let { uri ->
                     cameraLauncher.launch(uri)
                     isUpdatingPhoto = true
@@ -75,6 +75,7 @@ fun ProfileScreen(
             errorMessage = "Camera permission is required to take a photo."
         }
     }
+
 
     LaunchedEffect(userId) {
         viewModel.loadProfileById(userId)
@@ -142,12 +143,30 @@ fun UserProfileTab(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            tempPhotoUri = viewModel.getOutputFileUri(context)
+            tempPhotoUri = viewModel.getOutputFileUri(isProfile = true)  // Updated this line
             tempPhotoUri?.let { uri -> cameraLauncher.launch(uri) }
         } else {
             errorMessage = "Camera permission is required to take a photo."
         }
     }
+    val handleCameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success && tempPhotoUri != null) {
+            isUpdatingPhoto = true
+            viewModel.updateUserProfilePicture(tempPhotoUri!!)
+        }
+    }
+    // Gallery launcher with photo handling
+    val handleGalleryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            isUpdatingPhoto = true
+            viewModel.updateUserProfilePicture(it)
+        }
+    }
+
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -197,27 +216,22 @@ fun UserProfileTab(
         UserPhotoOptionsDialog(
             onDismiss = { showPhotoOptions = false },
             onTakePhoto = {
-                when (PackageManager.PERMISSION_GRANTED) {
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) -> {
-                        try {
-                            tempPhotoUri = viewModel.getOutputFileUri(context)
-                            tempPhotoUri?.let { uri ->
-                                cameraLauncher.launch(uri)
-                                isUpdatingPhoto = true
-                            }
-                        } catch (e: Exception) {
-                            errorMessage = "Failed to initialize camera: ${e.message}"
-                        }
-                    }
-                    else -> permissionLauncher.launch(Manifest.permission.CAMERA)
+                tempPhotoUri = viewModel.getOutputFileUri(isProfile = true)
+                tempPhotoUri?.let { uri ->
+                    handleCameraLauncher.launch(uri)
                 }
                 showPhotoOptions = false
             },
             onChooseFromGallery = {
-                galleryLauncher.launch("image/*")
+                handleGalleryLauncher.launch("image/*")
                 showPhotoOptions = false
             }
         )
+    }
+
+    // Show loading indicator while updating
+    if (isUpdatingPhoto) {
+        LoadingDialog()
     }
     LaunchedEffect(isUpdatingPhoto) {
         if (isUpdatingPhoto && tempPhotoUri != null) {
