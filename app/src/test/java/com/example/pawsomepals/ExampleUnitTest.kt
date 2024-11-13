@@ -1,4 +1,4 @@
-package com.example.pawsomepals
+package io.pawsomepals.app
 
 import org.junit.Test
 

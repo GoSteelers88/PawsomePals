@@ -34,7 +34,7 @@
 -keep public class * extends android.content.ContentProvider
 
 # Keep custom application class
--keep public class com.example.pawsomepals.PawsomePalsApplication { *; }
+-keep public class io.pawsomepals.app.PawsomePalsApplication { *; }
 
 # Keep ViewModel classes
 -keep public class * extends androidx.lifecycle.ViewModel { *; }

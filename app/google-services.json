@@ -10,7 +10,7 @@
       "client_info": {
         "mobilesdk_app_id": "1:455388576182:android:fcb4e2564b1dff93192917",
         "android_client_info": {
-          "package_name": "com.example.pawsomepals"
+          "package_name": "io.pawsomepals.app"
         }
       },
       "oauth_client": [
@@ -18,7 +18,7 @@
           "client_id": "455388576182-cql6n5bec1ngb74hlhbs93fafnsda34o.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
-            "package_name": "com.example.pawsomepals",
+            "package_name": "io.pawsomepals.app",
             "certificate_hash": "d1dc9e9a3f9632736b785b56f8f47d2bf6062f5b"
           }
         },

@@ -1,0 +1,336 @@
+Playdateschedule screen
+
+import { useState } from 'react';
+import { ChevronLeft, Clock, List, Calendar, Check, Plus } from 'lucide-react';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+
+export default function PlaydateScreen() {
+  const [selectedMode, setSelectedMode] = useState('MY_PLAYDATES');
+  const [selectedDate, setSelectedDate] = useState(null);
+
+  return (
+    <div className="h-screen bg-gray-50">
+      {/* Enhanced Top Bar with Visual Hierarchy */}
+      <div className="bg-white shadow-sm">
+        <div className="px-4 py-2 flex items-center border-b">
+          <button className="p-2 hover:bg-gray-100 rounded-full">
+            <ChevronLeft className="h-6 w-6 text-gray-600" />
+          </button>
+          <h1 className="text-xl font-semibold ml-2">Playdates</h1>
+          <div className="ml-auto flex gap-2">
+            <button className="p-2 hover:bg-gray-100 rounded-full">
+              <List className="h-5 w-5 text-gray-600" />
+            </button>
+            <button className="p-2 hover:bg-gray-100 rounded-full">
+              <Calendar className="h-5 w-5 text-gray-600" />
+            </button>
+          </div>
+        </div>
+
+        {/* Improved Mode Selector with Visual Feedback */}
+        <div className="px-4 py-2 flex gap-2">
+          {['MY_PLAYDATES', 'MY_AVAILABILITY', 'SCHEDULE_PLAYDATE'].map(mode => (
+            <button
+              key={mode}
+              className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                selectedMode === mode
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+              onClick={() => setSelectedMode(mode)}
+            >
+              {mode.replace(/_/g, ' ')}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Quick Stats Dashboard */}
+      <div className="px-4 py-3 grid grid-cols-3 gap-4">
+        <div className="bg-white p-4 rounded-xl shadow-sm">
+          <div className="flex items-center gap-2 text-blue-600">
+            <Calendar className="h-5 w-5" />
+            <span className="text-sm font-medium">This Week</span>
+          </div>
+          <p className="text-2xl font-semibold mt-2">3 Playdates</p>
+        </div>
+        <div className="bg-white p-4 rounded-xl shadow-sm">
+          <div className="flex items-center gap-2 text-green-600">
+            <Clock className="h-5 w-5" />
+            <span className="text-sm font-medium">Available Slots</span>
+          </div>
+          <p className="text-2xl font-semibold mt-2">12 Hours</p>
+        </div>
+        <div className="bg-white p-4 rounded-xl shadow-sm">
+          <div className="flex items-center gap-2 text-purple-600">
+            <Check className="h-5 w-5" />
+            <span className="text-sm font-medium">Completed</span>
+          </div>
+          <p className="text-2xl font-semibold mt-2">8 Meets</p>
+        </div>
+      </div>
+
+      {/* Upcoming Playdate Alert */}
+      <div className="px-4 mt-4">
+        <Alert className="bg-blue-50 border-blue-100">
+          <Calendar className="h-4 w-4 text-blue-600" />
+          <AlertTitle className="text-blue-700">Upcoming Playdate</AlertTitle>
+          <AlertDescription className="text-blue-600">
+            Meeting with Max at Central Park, Today at 4:00 PM
+          </AlertDescription>
+        </Alert>
+      </div>
+
+      {/* Time Slot Grid with Visual Improvements */}
+      <div className="px-4 py-6">
+        <div className="bg-white rounded-xl shadow-sm p-4">
+          <div className="grid grid-cols-4 gap-3">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <button
+                key={i}
+                className={`p-3 rounded-lg text-center transition-colors ${
+                  i === 2
+                    ? 'bg-blue-100 text-blue-700 border-2 border-blue-200'
+                    : 'border border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                <div className="text-sm font-medium">
+                  {`${9 + i}:00`}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  {i % 2 === 0 ? 'Available' : '2 slots'}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Floating Action Button with Context */}
+      <div className="fixed bottom-6 right-6">
+        <div className="absolute bottom-full right-0 mb-2 bg-white rounded-lg shadow-lg px-3 py-2 text-sm font-medium text-gray-600">
+          Schedule New Playdate
+        </div>
+        <button className="bg-blue-600 hover:bg-blue-700 text-white rounded-full p-4 shadow-lg">
+          <Plus className="h-6 w-6" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+Key Improvements in the New Design:
+
+Enhanced Visual Hierarchy
+
+Clearer section separation
+Better use of white space
+More intuitive navigation elements
+Added visual feedback for interactions
+
+
+New Features
+
+Quick stats dashboard showing key metrics
+Upcoming playdate alerts
+Visual time slot grid with availability indicators
+Tooltip guidance for the floating action button
+
+
+Improved Usability
+
+More touch-friendly targets
+Better contrast for readability
+Clearer state indicators
+Contextual information at each step
+
+
+Modern UI Elements
+
+Card-based layout for better content grouping
+Rounded corners for a friendlier feel
+Subtle shadows for depth
+Consistent color scheme
+
+
+Information Architecture
+
+Added status indicators
+Better date/time visualization
+More intuitive mode switching
+Clear action hierarchies
+
+
+
+Dog Friendly Location Selector
+
+
+import { useState } from 'react';
+import { MapPin, PawPrint, Shield, Clock, Search } from 'lucide-react';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+
+const LocationSelector = () => {
+  const [selectedLocation, setSelectedLocation] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Mock data - would come from your backend
+  const locations = [
+    {
+      id: 1,
+      name: 'Central Park Dog Run',
+      distance: '0.8',
+      amenities: ['Water Stations', 'Waste Bags', 'Fenced Area'],
+      restrictions: ['No Food', 'Leash Required for Entry'],
+      rating: 4.5,
+      activeHours: '6:00 AM - 10:00 PM'
+    },
+    {
+      id: 2,
+      name: 'Riverside Dog Park',
+      distance: '1.2',
+      amenities: ['Agility Equipment', 'Shade Areas', 'Water Fountain'],
+      restrictions: ['Proof of Vaccination Required'],
+      rating: 4.2,
+      activeHours: '7:00 AM - 9:00 PM'
+    }
+  ];
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm">
+      {/* Search Bar */}
+      <div className="p-4 border-b">
+        <div className="relative">
+          <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Search dog-friendly locations..."
+            className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Location Cards */}
+      <div className="divide-y">
+        {locations.map(location => (
+          <div
+            key={location.id}
+            className={`p-4 hover:bg-gray-50 transition-colors cursor-pointer ${
+              selectedLocation?.id === location.id ? 'bg-blue-50' : ''
+            }`}
+            onClick={() => setSelectedLocation(location)}
+          >
+            <div className="flex justify-between items-start mb-3">
+              <div>
+                <h3 className="font-medium text-lg">{location.name}</h3>
+                <div className="flex items-center text-sm text-gray-500 mt-1">
+                  <MapPin className="h-4 w-4 mr-1" />
+                  <span>{location.distance} miles away</span>
+                  <Clock className="h-4 w-4 ml-3 mr-1" />
+                  <span>{location.activeHours}</span>
+                </div>
+              </div>
+              <div className="flex items-center bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                <PawPrint className="h-4 w-4 mr-1" />
+                <span className="text-sm font-medium">{location.rating}</span>
+              </div>
+            </div>
+
+            {/* Amenities */}
+            <div className="mb-2">
+              <div className="flex items-center mb-2">
+                <PawPrint className="h-4 w-4 text-green-600 mr-2" />
+                <span className="text-sm font-medium text-gray-700">Amenities</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {location.amenities.map((amenity, index) => (
+                  <span
+                    key={index}
+                    className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full"
+                  >
+                    {amenity}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Restrictions */}
+            <div>
+              <div className="flex items-center mb-2">
+                <Shield className="h-4 w-4 text-amber-600 mr-2" />
+                <span className="text-sm font-medium text-gray-700">Restrictions</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {location.restrictions.map((restriction, index) => (
+                  <span
+                    key={index}
+                    className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full"
+                  >
+                    {restriction}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Selected Location Alert */}
+      {selectedLocation && (
+        <div className="p-4 border-t">
+          <Alert className="bg-blue-50 border-blue-100">
+            <MapPin className="h-4 w-4 text-blue-600" />
+            <AlertTitle>Location Selected</AlertTitle>
+            <AlertDescription className="text-blue-600">
+              {selectedLocation.name} - {selectedLocation.distance} miles away
+            </AlertDescription>
+          </Alert>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default LocationSelector;
+
+
+This enhanced location selector includes:
+
+Search Functionality:
+
+Quick search for nearby locations
+Distance indicators
+Operating hours
+
+
+Rich Location Details:
+
+Amenity tags (water stations, waste bags, etc.)
+Restriction badges (vaccination requirements, rules)
+Ratings and reviews
+Operating hours
+
+
+Visual Feedback:
+
+Selected state highlighting
+Clear amenity/restriction categorization
+Distance and rating indicators
+
+
+User Experience:
+
+Easy scanning of options
+Clear visual hierarchy
+Intuitive selection process
+
+
+
+Would you like me to:
+
+Add map integration?
+Enhance the filtering options?
+Add a detailed location view?
+Integrate this with the playdate scheduling flow?
