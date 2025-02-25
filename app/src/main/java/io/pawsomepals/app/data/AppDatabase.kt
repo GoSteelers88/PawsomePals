@@ -8,6 +8,7 @@ import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import io.pawsomepals.app.data.converters.Converters
+import io.pawsomepals.app.data.converters.DogFriendlyLocationTypeConverter
 import io.pawsomepals.app.data.dao.AchievementDao
 import io.pawsomepals.app.data.dao.ChatDao
 import io.pawsomepals.app.data.dao.DogDao
@@ -60,10 +61,12 @@ import io.pawsomepals.app.data.model.User
         Achievement::class,
 
     ],
-    version = 37, // Increment version
+    version = 49, // Increment version
     exportSchema = true
 )
-@TypeConverters(Converters::class, Converters.PlaydateWithDetailsConverter::class)
+@TypeConverters(Converters::class, Converters.PlaydateWithDetailsConverter::class,
+    DogFriendlyLocationTypeConverter::class  // Add this
+)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun userDao(): UserDao
     abstract fun playdateDao(): PlaydateDao
@@ -80,6 +83,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun dogFriendlyLocationDao(): DogFriendlyLocationDao
     abstract fun achievementDao(): AchievementDao
     abstract fun timeSlotDao(): TimeSlotDao
+
 // Add this line
 
 

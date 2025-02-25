@@ -8,18 +8,26 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:455388576182:android:fcb4e2564b1dff93192917",
+        "mobilesdk_app_id": "1:455388576182:android:1ff73c01ce5d620d192917",
         "android_client_info": {
           "package_name": "io.pawsomepals.app"
         }
       },
       "oauth_client": [
         {
-          "client_id": "455388576182-cql6n5bec1ngb74hlhbs93fafnsda34o.apps.googleusercontent.com",
+          "client_id": "455388576182-2sn81u37vidvuv9qltd4qfpccc6hv7qk.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "io.pawsomepals.app",
             "certificate_hash": "d1dc9e9a3f9632736b785b56f8f47d2bf6062f5b"
+          }
+        },
+        {
+          "client_id": "455388576182-fdn87hd9gum0b3pg1f18o15e6f2phs80.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "io.pawsomepals.app",
+            "certificate_hash": "4d5ca50eb2ae6107df59bfe4c783d20e0f8704f7"
           }
         },
         {

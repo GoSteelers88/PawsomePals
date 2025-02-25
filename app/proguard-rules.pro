@@ -14,6 +14,21 @@
 -keepattributes Signature
 -keepattributes Exceptions
 
+# Keep your data models
+-keep class io.pawsomepals.app.data.model.** { *; }
+
+# Keep Firestore serialization
+-keepclassmembers class io.pawsomepals.app.data.model.** {
+    <init>();
+    <fields>;
+}
+
+# Keep the setter method specifically
+-keepclassmembers class io.pawsomepals.app.data.model.Dog {
+    void setSpayedNeutered(java.lang.Boolean);
+}
+
+
 # Keep Gson classes (if you're using Gson for JSON parsing)
 -keep class com.google.gson.** { *; }
 -keepattributes Signature

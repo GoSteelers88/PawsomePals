@@ -1,12 +1,17 @@
 package io.pawsomepals.app.ui.components
 
 import android.Manifest
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.util.Log
+import android.view.ViewGroup
 import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.view.PreviewView
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -17,6 +22,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,6 +38,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -44,7 +51,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -59,14 +68,14 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import io.pawsomepals.app.R
 import io.pawsomepals.app.data.model.Dog
-import io.pawsomepals.app.utils.CameraPermissionHandler
-import io.pawsomepals.app.utils.CameraPermissionManager
-import io.pawsomepals.app.utils.CameraPermissionState
+import io.pawsomepals.app.utils.CameraManager
 import io.pawsomepals.app.viewmodel.DogProfileViewModel
 import io.pawsomepals.app.viewmodel.ProfileViewModel
 import kotlinx.coroutines.launch
@@ -76,52 +85,103 @@ import kotlinx.coroutines.launch
 fun DogProfileTab(
     viewModel: ProfileViewModel,
     dogProfileViewModel: DogProfileViewModel,
-    cameraLauncher: ManagedActivityResultLauncher<Uri, Boolean>,
     galleryLauncher: ManagedActivityResultLauncher<String, Uri?>,
-    cameraPermissionManager: CameraPermissionManager, // Add this
+    cameraManager: CameraManager,
     onNavigateToAddDog: () -> Unit
 ) {
     var selectedDogId by remember { mutableStateOf<String?>(null) }
     val userDogs by dogProfileViewModel.userDogs.collectAsStateWithLifecycle()
+    val dogProfileState by dogProfileViewModel.dogProfileState.collectAsState()
 
-    // Set initial selected dog if available
-    LaunchedEffect(userDogs) {
-        if (selectedDogId == null && userDogs.isNotEmpty()) {
-            selectedDogId = userDogs.first().id
-            dogProfileViewModel.setCurrentDog(userDogs.first().id)
-        }
+    // Add debug logs
+    LaunchedEffect(Unit) {
+        Log.d("DogProfileTab", "DogProfileTab initialized")
+        dogProfileViewModel.loadUserDogs() // Always try to load dogs when tab is shown
     }
 
-    // Add this call to DogProfileList
-    DogProfileList(
-        dogs = userDogs,
-        selectedDogId = selectedDogId,
-        onDogSelected = { dogId ->
-            selectedDogId = dogId
-            dogProfileViewModel.setCurrentDog(dogId)
-        },
-        viewModel = viewModel,
-        cameraLauncher = cameraLauncher,
-        galleryLauncher = galleryLauncher,
-        cameraPermissionManager = cameraPermissionManager, // Add this
-        onNavigateToAddDog = onNavigateToAddDog
-    )
+    when (dogProfileState) {
+        is DogProfileViewModel.DogProfileState.Loading -> {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
+        }
+        is DogProfileViewModel.DogProfileState.Error -> {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = (dogProfileState as DogProfileViewModel.DogProfileState.Error).message,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+        else -> {
+            if (userDogs.isEmpty()) {
+                // Show empty state
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = "No dogs found",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    FilledTonalButton(onClick = onNavigateToAddDog) {
+                        Text("Add Your First Dog")
+                    }
+                }
+            } else {
+                // Initialize dog selection once
+                LaunchedEffect(userDogs) {
+                    if (selectedDogId == null && userDogs.isNotEmpty()) {
+                        val firstDogId = userDogs.first().id
+                        Log.d("DogProfileTab", "Setting initial dog ID: $firstDogId")
+                        selectedDogId = firstDogId
+                        dogProfileViewModel.setCurrentDog(firstDogId)
+                    }
+                }
+
+                DogProfileList(
+                    dogs = userDogs,
+                    selectedDogId = selectedDogId,
+                    onDogSelected = { dogId ->
+                        Log.d("DogProfileTab", "Dog selected: $dogId")
+                        selectedDogId = dogId
+                        dogProfileViewModel.setCurrentDog(dogId)
+                    },
+                    viewModel = viewModel,
+                    dogProfileViewModel = dogProfileViewModel,
+                    galleryLauncher = galleryLauncher,
+                    cameraManager = cameraManager,
+                    onNavigateToAddDog = onNavigateToAddDog
+                )
+            }
+        }
+    }
 }
 
-
-
 @Composable
-    private fun DogProfileList(
-        dogs: List<Dog>,
-        selectedDogId: String?,
-        onDogSelected: (String) -> Unit,
-        viewModel: ProfileViewModel,
-        cameraLauncher: ManagedActivityResultLauncher<Uri, Boolean>,
-        galleryLauncher: ManagedActivityResultLauncher<String, Uri?>,
-        cameraPermissionManager: CameraPermissionManager, // Add this
-
-        onNavigateToAddDog: () -> Unit
-    ) {
+private fun DogProfileList(
+    dogs: List<Dog>,
+    selectedDogId: String?,
+    onDogSelected: (String) -> Unit,
+    viewModel: ProfileViewModel,
+    dogProfileViewModel: DogProfileViewModel,
+    galleryLauncher: ManagedActivityResultLauncher<String, Uri?>,
+    cameraManager: CameraManager,
+    onNavigateToAddDog: () -> Unit
+) {
         Column {
             LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -138,7 +198,6 @@ fun DogProfileTab(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Only show selected dog's profile with all required parameters
             dogs.find { it.id == selectedDogId }?.let { selectedDog ->
                 DogProfileContent(
                     dog = selectedDog,
@@ -146,10 +205,10 @@ fun DogProfileTab(
                         .collectAsStateWithLifecycle()
                         .value
                         .getOrDefault(selectedDog.id, emptyMap()),
-                    cameraLauncher = cameraLauncher,
                     galleryLauncher = galleryLauncher,
                     viewModel = viewModel,
-                    cameraPermissionManager = cameraPermissionManager  // Add this
+                    dogProfileViewModel = dogProfileViewModel,  // Pass this through
+                    cameraManager = cameraManager  // Updated parameter name
                 )
             }
         }
@@ -180,11 +239,11 @@ private fun DogSelectorItem(dog: Dog, isSelected: Boolean, onClick: () -> Unit) 
 private fun DogProfileContent(
     dog: Dog,
     questionnaireResponses: Map<String, String> = emptyMap(),
-    cameraLauncher: ManagedActivityResultLauncher<Uri, Boolean>,
     galleryLauncher: ManagedActivityResultLauncher<String, Uri?>,
-    cameraPermissionManager: CameraPermissionManager,
-    viewModel: ProfileViewModel
-) {
+    cameraManager: CameraManager,
+    viewModel: ProfileViewModel,
+    dogProfileViewModel: DogProfileViewModel
+){
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -194,15 +253,14 @@ private fun DogProfileContent(
         item {
             DogProfileWithPhoto(
                 dog = dog,
-                cameraLauncher = cameraLauncher,
                 galleryLauncher = galleryLauncher,
                 viewModel = viewModel,
-                cameraPermissionManager = cameraPermissionManager // Add this
+                dogProfileViewModel = dogProfileViewModel,  // Pass this through
+                cameraManager = cameraManager,
 
             )
             Spacer(modifier = Modifier.height(24.dp))
         }
-
         // Basic Information
         item {
             Column {
@@ -285,113 +343,50 @@ private fun DogProfileContent(
 @Composable
 private fun DogProfileWithPhoto(
     dog: Dog,
-    cameraLauncher: ManagedActivityResultLauncher<Uri, Boolean>,
     galleryLauncher: ManagedActivityResultLauncher<String, Uri?>,
     viewModel: ProfileViewModel,
-    cameraPermissionManager: CameraPermissionManager  // Add this parameter
-
+    dogProfileViewModel: DogProfileViewModel,
+    cameraManager: CameraManager
 ) {
-
+    var showCamera by remember { mutableStateOf(false) }
+    var showPhotoOptions by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val cameraState by cameraManager.cameraState.collectAsStateWithLifecycle()
 
-    var showPhotoOptions by remember { mutableStateOf(false) }
-    var tempPhotoUri by remember { mutableStateOf<Uri?>(null) }
-    var isUpdatingPhoto by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Add permission handling state
-    val permissionState = remember { CameraPermissionState.create(context) }
-    var shouldLaunchCamera by remember { mutableStateOf(false) }
-    val handleCameraLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.TakePicture()
-    ) { success ->
-        if (success && tempPhotoUri != null) {
-            isUpdatingPhoto = true
-            scope.launch {  // Use the remembered scope
-                try {
-                    viewModel.updateDogProfilePicture(0, tempPhotoUri!!)
-                } catch(e: Exception) {
-                    errorMessage = e.message ?: "Failed to update profile picture"
-                } finally {
-                    isUpdatingPhoto = false
-                    tempPhotoUri = null  // Clear the URI after processing
-                }
-            }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.entries.all { it.value }
+        if (allGranted) {
+            showCamera = true
+        } else {
+            errorMessage = "Camera and storage permissions are required"
         }
     }
-
-    val handleGalleryLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri ->
-        uri?.let {
-            isUpdatingPhoto = true
-            scope.launch {  // Use scope instead of coroutineScope
-                try {
-                    viewModel.updateDogProfilePicture(0, it)
-                } catch(e: Exception) {
-                    Log.e("DogProfileWithPhoto", "Error updating profile picture", e)
-                    errorMessage = e.message ?: "Failed to update profile picture"
-                } finally {
-                    isUpdatingPhoto = false
-                }
+    LaunchedEffect(cameraState) {
+        when (cameraState) {
+            is CameraManager.CameraState.Success -> {
+                val uri = (cameraState as CameraManager.CameraState.Success).uri
+                dogProfileViewModel.updateDogProfilePicture(0, uri, dog.id)
+                showCamera = false
             }
+            is CameraManager.CameraState.Error -> {
+                errorMessage = (cameraState as CameraManager.CameraState.Error).message
+            }
+            else -> {}
         }
     }
-
-    LaunchedEffect(dog.id) {
-        viewModel.setCurrentDog(dog.id)
-    }
-
-    // Collect error state from ViewModel
-    LaunchedEffect(Unit) {
-        viewModel.error.collect { error ->
-            error?.let {
-                errorMessage = it
-                isUpdatingPhoto = false
-            }
-        }
-    }
-
-    // Function to handle camera launch after permission
-    fun handleCameraLaunch() {
-        scope.launch {
-            try {
-                tempPhotoUri = viewModel.getOutputFileUri(isProfile = true)
-                tempPhotoUri?.let { uri ->
-                    cameraLauncher.launch(uri)
-                }
-            } catch (e: SecurityException) {
-                errorMessage = "Failed to launch camera: ${e.message}"
-            }
-        }
-    }
-
-    // Permission handler component
-    CameraPermissionHandler(
-        viewModel = cameraPermissionManager,
-        onPermissionGranted = {
-            if (shouldLaunchCamera) {
-                handleCameraLaunch()
-                shouldLaunchCamera = false
-            }
-        },
-        onPermissionDenied = {
-            errorMessage = "Camera permission is required to take photos"
-            shouldLaunchCamera = false
-        }
-    )
 
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp),
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            modifier = Modifier
-                .size(160.dp)
-                .clip(CircleShape)
+            modifier = Modifier.size(160.dp).clip(CircleShape)
                 .background(MaterialTheme.colorScheme.surfaceVariant)
         ) {
             AsyncImage(
@@ -403,14 +398,9 @@ private fun DogProfileWithPhoto(
 
             IconButton(
                 onClick = { showPhotoOptions = true },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(8.dp)
+                modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
                     .size(40.dp)
-                    .background(
-                        color = MaterialTheme.colorScheme.primary,
-                        shape = CircleShape
-                    )
+                    .background(color = MaterialTheme.colorScheme.primary, shape = CircleShape)
             ) {
                 Icon(
                     imageVector = Icons.Default.Add,
@@ -420,16 +410,56 @@ private fun DogProfileWithPhoto(
             }
         }
 
-        if (isUpdatingPhoto) {
-            CircularProgressIndicator(
-                modifier = Modifier.padding(8.dp)
-            )
+        if (showCamera) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                AndroidView(
+                    factory = { context ->
+                        PreviewView(context).apply {
+                            this.scaleType = PreviewView.ScaleType.FILL_CENTER  // FILL_CENTER will fill the entire view
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT
+                            )
+                            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxSize()  // Fill maximum available space
+                        .fillMaxWidth() // Ensure width is filled
+                        .fillMaxHeight(), // Ensure height is filled
+                    update = { previewView ->
+                        scope.launch {
+                            cameraManager.initializeCamera(lifecycleOwner, previewView)
+                        }
+                    }
+                )
+
+                IconButton(
+                    onClick = {
+                        scope.launch {
+                            val uri = cameraManager.capturePhoto()
+                            uri?.let {
+                                showCamera = false
+                                dogProfileViewModel.updateDogProfilePicture(0, it, dog.id)
+                            }
+                        }
+                    },
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PhotoCamera,
+                        contentDescription = "Take Photo",
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(64.dp)
+                    )
+                }
+            }
         }
 
         if (showPhotoOptions) {
             AlertDialog(
                 onDismissRequest = { showPhotoOptions = false },
-                title = { Text("Change Profile Picture") },
+                title = { Text("Change Dog's Picture") },
                 text = {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
@@ -437,11 +467,20 @@ private fun DogProfileWithPhoto(
                     ) {
                         FilledTonalButton(
                             onClick = {
-                                shouldLaunchCamera = true
-                                showPhotoOptions = false
-                                if (permissionState.permissionState.value is CameraPermissionState.PermissionState.Granted) {
-                                    handleCameraLaunch()
+                                when {
+                                    cameraManager.hasRequiredPermissions() -> {
+                                        showCamera = true
+                                    }
+                                    else -> {
+                                        permissionLauncher.launch(
+                                            arrayOf(
+                                                Manifest.permission.CAMERA,
+                                                Manifest.permission.WRITE_EXTERNAL_STORAGE
+                                            )
+                                        )
+                                    }
                                 }
+                                showPhotoOptions = false
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -450,7 +489,7 @@ private fun DogProfileWithPhoto(
 
                         FilledTonalButton(
                             onClick = {
-                                handleGalleryLauncher.launch("image/*")
+                                galleryLauncher.launch("image/*")
                                 showPhotoOptions = false
                             },
                             modifier = Modifier.fillMaxWidth()
@@ -468,12 +507,11 @@ private fun DogProfileWithPhoto(
             )
         }
 
-        // Error dialog
-        errorMessage?.let { error ->
+        if (errorMessage != null) {
             AlertDialog(
                 onDismissRequest = { errorMessage = null },
                 title = { Text("Error") },
-                text = { Text(error) },
+                text = { Text(errorMessage ?: "") },
                 confirmButton = {
                     TextButton(onClick = { errorMessage = null }) {
                         Text("OK")
@@ -483,19 +521,25 @@ private fun DogProfileWithPhoto(
         }
     }
 
-    // Handle photo update in a LaunchedEffect
-    LaunchedEffect(isUpdatingPhoto) {
-        if (isUpdatingPhoto && tempPhotoUri != null) {
-            try {
-                viewModel.updateUserProfilePicture(tempPhotoUri!!)
-            } catch (e: Exception) {
-                errorMessage = "Failed to update profile picture: ${e.message}"
-            } finally {
-                isUpdatingPhoto = false
-                tempPhotoUri = null
-            }
+    DisposableEffect(Unit) {
+        onDispose {
+            cameraManager.cleanup()
         }
     }
+}
+private fun shouldShowRequestPermissionRationale(context: Context, permission: String): Boolean {
+    val activity = context.findActivity()
+    return activity?.shouldShowRequestPermissionRationale(permission) ?: false
+}
+private fun Context.findActivity(): Activity? {
+    var currentContext = this
+    while (currentContext is ContextWrapper) {
+        if (currentContext is Activity) {
+            return currentContext
+        }
+        currentContext = currentContext.baseContext
+    }
+    return null
 }
 @Composable
 private fun DogBasicInfoSection(dog: Dog) {
@@ -561,7 +605,7 @@ private fun DogCareInfoSection(dog: Dog, questionnaireResponses: Map<String, Str
         )
         SharedDogProfileField(
             "Spayed/Neutered",
-            questionnaireResponses["isSpayedNeutered"] ?: (dog.isSpayedNeutered ?: "Unknown")
+            if (dog.isSpayedNeutered == true) "Yes" else "No"
         )
     }
 }
@@ -662,7 +706,7 @@ private fun DogHealthInformation(dog: Dog) {
     ) {
         Text("Spayed/Neutered", style = MaterialTheme.typography.bodyLarge)
         Text(
-            dog.isSpayedNeutered ?: "Unknown",
+            if (dog.isSpayedNeutered == true) "Yes" else "No",
             style = MaterialTheme.typography.bodyLarge,
             fontWeight = FontWeight.Medium
         )

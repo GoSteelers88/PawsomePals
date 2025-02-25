@@ -1,11 +1,19 @@
 package io.pawsomepals.app.ui.theme
 
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -13,60 +21,31 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import io.pawsomepals.app.R
 import io.pawsomepals.app.Screen
+import io.pawsomepals.app.utils.CameraManager
 import io.pawsomepals.app.viewmodel.AuthViewModel
 import kotlinx.coroutines.delay
+
 
 @Composable
 fun SplashScreen(
     authViewModel: AuthViewModel,
-    navController: NavController
+    navController: NavController,
+    cameraManager: CameraManager
 ) {
     val authState by authViewModel.authState.collectAsState()
-    val currentUser by authViewModel.currentUser.collectAsState()
+    val isUserFullyLoaded by authViewModel.isUserFullyLoaded.collectAsState()
 
-    LaunchedEffect(authState, currentUser) {
-        delay(2000) // Optional: Add a small delay to show the splash screen
-
-        when (authState) {
-            AuthViewModel.AuthState.Authenticated -> {
-                when {
-                    currentUser == null -> navigateToLogin(navController)
-                    !currentUser!!.hasAcceptedTerms -> navigateToTermsOfService(navController)
-                    !currentUser!!.hasCompletedQuestionnaire -> navigateToQuestionnaire(navController)
-                    else -> navigateToMainScreen(navController)
-                }
-            }
-            AuthViewModel.AuthState.Unauthenticated -> navigateToLogin(navController)
-            AuthViewModel.AuthState.Initial -> {} // Wait for auth state to be determined
+    LaunchedEffect(Unit) {
+        delay(2000) // Show splash for 2 seconds
+        navController.navigate(Screen.Login.route) {
+            popUpTo(Screen.Splash.route) { inclusive = true }
         }
     }
 
     SplashScreenContent()
 }
 
-private fun navigateToLogin(navController: NavController) {
-    navController.navigate(Screen.Login.route) {
-        popUpTo(Screen.Splash.route) { inclusive = true }
-    }
-}
 
-private fun navigateToTermsOfService(navController: NavController) {
-    navController.navigate(Screen.TermsOfService.route) {
-        popUpTo(Screen.Splash.route) { inclusive = true }
-    }
-}
-
-private fun navigateToQuestionnaire(navController: NavController) {
-    navController.navigate(Screen.Questionnaire.route) {
-        popUpTo(Screen.Splash.route) { inclusive = true }
-    }
-}
-
-private fun navigateToMainScreen(navController: NavController) {
-    navController.navigate(Screen.MainScreen.route) {
-        popUpTo(Screen.Splash.route) { inclusive = true }
-    }
-}
 
 @Composable
 private fun SplashScreenContent() {

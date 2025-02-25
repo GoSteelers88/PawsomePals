@@ -1,16 +1,20 @@
 package io.pawsomepals.app.data.repository
 
+import android.location.Location
 import android.util.Log
+import com.google.android.gms.maps.model.LatLng
+import com.google.firebase.firestore.FirebaseFirestore
 import io.pawsomepals.app.data.dao.DogFriendlyLocationDao
 import io.pawsomepals.app.data.model.DogFriendlyLocation
 import io.pawsomepals.app.service.location.LocationSearchService
 import io.pawsomepals.app.utils.LocationMapper
 import io.pawsomepals.app.utils.LocationValidator
-import com.google.android.gms.maps.model.LatLng
-import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -30,12 +34,12 @@ class LocationRepository @Inject constructor(
 
     sealed class LocationResult<out T> {
         data class Success<T>(val data: T) : LocationResult<T>()
-        data class Error(val exception: Exception) : LocationResult<Nothing>()
+        data class Error(val exception: Throwable) : LocationResult<Nothing>()
         object Loading : LocationResult<Nothing>()
     }
 
     fun searchNearbyLocations(
-        location: LatLng,
+        location: LatLng,  // Keep this parameter for caching purposes
         radius: Double,
         filters: LocationSearchService.LocationFilters = LocationSearchService.LocationFilters()
     ): Flow<LocationResult<List<DogFriendlyLocation>>> = flow {
@@ -52,32 +56,53 @@ class LocationRepository @Inject constructor(
                 emit(LocationResult.Success(cachedLocations))
             }
 
-            // Fetch from network
-            locationSearchService.searchDogFriendlyLocations(location, radius, filters)
-                .collect { result ->
-                    when (result) {
-                        is LocationSearchService.SearchResult.Success -> {
-                            val validatedLocations = validateAndFilterLocations(result.data)
-                            // Update cache
-                            locationDao.insertAll(validatedLocations)
-                            // Update Firestore
-                            updateFirestoreLocations(validatedLocations)
-                            emit(LocationResult.Success(validatedLocations))
-                        }
-                        is LocationSearchService.SearchResult.Error -> {
-                            emit(LocationResult.Error(result.exception))
-                        }
-                        is LocationSearchService.SearchResult.Loading -> {
-                            // Already emitted Loading state
-                        }
+            // Fetch from network - note we only pass radius and filters now
+            locationSearchService.searchDogFriendlyLocations(
+                radius = radius,
+                filters = filters
+            ).collect { result ->
+                when (result) {
+                    is LocationSearchService.SearchResult.Success -> {
+                        val validatedLocations = validateAndFilterLocations(result.data)
+                        // Update cache
+                        locationDao.insertAll(validatedLocations)
+                        // Update Firestore
+                        updateFirestoreLocations(validatedLocations)
+                        emit(LocationResult.Success(validatedLocations))
+                    }
+                    is LocationSearchService.SearchResult.Error -> {
+                        emit(LocationResult.Error(result.exception))
+                    }
+                    is LocationSearchService.SearchResult.Loading -> {
+                        // Already emitted Loading state
                     }
                 }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error searching nearby locations", e)
             emit(LocationResult.Error(e))
         }
     }
+    suspend fun saveLocation(location: DogFriendlyLocation): LocationResult<Unit> {
+        return try {
+            // Update local cache
+            locationDao.insert(location.copy(
+                isFavorite = true,
+                lastUpdated = System.currentTimeMillis()
+            ))
 
+            // Update in Firestore
+            firestore.collection(LOCATIONS_COLLECTION)
+                .document(location.placeId)
+                .set(location.copy(isFavorite = true))
+                .await()
+
+            LocationResult.Success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving location", e)
+            LocationResult.Error(e)
+        }
+    }
     suspend fun getLocationDetails(placeId: String): LocationResult<DogFriendlyLocation> {
         return try {
             // Check local cache first
@@ -87,28 +112,32 @@ class LocationRepository @Inject constructor(
             }
 
             // Fetch from network
-            when (val result = locationSearchService.getLocationDetails(placeId)) {
+            when (val result = locationSearchService.searchDogFriendlyLocations(
+                radius = 1.0,  // Small radius since we're looking for a specific place
+                filters = LocationSearchService.LocationFilters()
+            ).firstOrNull()) {
                 is LocationSearchService.SearchResult.Success -> {
-                    val validatedLocation = validateLocation(result.data)
-                    // Update cache
-                    locationDao.insert(validatedLocation)
-                    // Update Firestore
-                    updateFirestoreLocation(validatedLocation)
+                    val location = result.data.firstOrNull { it.placeId == placeId }
+                        ?: throw Exception("Location not found")
+                    val validatedLocation = validateLocation(location)
+                    withContext(Dispatchers.IO) {
+                        // Update cache
+                        locationDao.insert(validatedLocation)
+                        // Update Firestore
+                        updateFirestoreLocation(validatedLocation)
+                    }
                     LocationResult.Success(validatedLocation)
                 }
-                is LocationSearchService.SearchResult.Error -> {
+                is LocationSearchService.SearchResult.Error ->
                     LocationResult.Error(result.exception)
-                }
-                is LocationSearchService.SearchResult.Loading -> {
-                    LocationResult.Loading
-                }
+                is LocationSearchService.SearchResult.Loading,
+                null -> LocationResult.Error(Exception("No result found"))
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error getting location details", e)
             LocationResult.Error(e)
         }
     }
-
     fun getLocationsByType(
         venueType: DogFriendlyLocation.VenueType,
         location: LatLng,
@@ -116,28 +145,33 @@ class LocationRepository @Inject constructor(
     ): Flow<LocationResult<List<DogFriendlyLocation>>> = flow {
         emit(LocationResult.Loading)
         try {
-            locationSearchService.searchByVenueType(location, venueType, radius)
-                .collect { result ->
-                    when (result) {
-                        is LocationSearchService.SearchResult.Success -> {
-                            val validatedLocations = validateAndFilterLocations(result.data)
+            locationSearchService.searchDogFriendlyLocations(
+                radius = radius,
+                filters = LocationSearchService.LocationFilters(
+                    venueTypes = setOf(venueType)
+                )
+            ).collect { result ->
+                when (result) {
+                    is LocationSearchService.SearchResult.Success -> {
+                        val validatedLocations = validateAndFilterLocations(result.data)
+                        withContext(Dispatchers.IO) {
                             locationDao.insertAll(validatedLocations)
-                            emit(LocationResult.Success(validatedLocations))
                         }
-                        is LocationSearchService.SearchResult.Error -> {
-                            emit(LocationResult.Error(result.exception))
-                        }
-                        is LocationSearchService.SearchResult.Loading -> {
-                            // Already emitted Loading state
-                        }
+                        emit(LocationResult.Success(validatedLocations))
+                    }
+                    is LocationSearchService.SearchResult.Error -> {
+                        emit(LocationResult.Error(result.exception))
+                    }
+                    is LocationSearchService.SearchResult.Loading -> {
+                        // Already emitted Loading state
                     }
                 }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error getting locations by type", e)
             emit(LocationResult.Error(e))
         }
     }
-
     fun getLocationsByAmenities(
         amenities: Set<DogFriendlyLocation.Amenity>,
         location: LatLng,
@@ -145,28 +179,64 @@ class LocationRepository @Inject constructor(
     ): Flow<LocationResult<List<DogFriendlyLocation>>> = flow {
         emit(LocationResult.Loading)
         try {
-            locationSearchService.searchByAmenities(location, amenities, radius)
-                .collect { result ->
-                    when (result) {
-                        is LocationSearchService.SearchResult.Success -> {
-                            val validatedLocations = validateAndFilterLocations(result.data)
+            locationSearchService.searchDogFriendlyLocations(
+                radius = radius,
+                filters = LocationSearchService.LocationFilters(
+                    outdoorOnly = true,
+                    waterAvailable = amenities.contains(DogFriendlyLocation.Amenity.WATER_FOUNTAIN),
+                    hasParking = amenities.contains(DogFriendlyLocation.Amenity.PARKING)
+                )
+            ).collect { result ->
+                when (result) {
+                    is LocationSearchService.SearchResult.Success -> {
+                        val validatedLocations = validateAndFilterLocations(result.data)
+                            .filter { location ->
+                                amenities.all { amenity -> hasAmenity(location, amenity) }
+                            }
+                        withContext(Dispatchers.IO) {
                             locationDao.insertAll(validatedLocations)
-                            emit(LocationResult.Success(validatedLocations))
                         }
-                        is LocationSearchService.SearchResult.Error -> {
-                            emit(LocationResult.Error(result.exception))
-                        }
-                        is LocationSearchService.SearchResult.Loading -> {
-                            // Already emitted Loading state
-                        }
+                        emit(LocationResult.Success(validatedLocations))
+                    }
+                    is LocationSearchService.SearchResult.Error -> {
+                        emit(LocationResult.Error(result.exception))
+                    }
+                    is LocationSearchService.SearchResult.Loading -> {
+                        // Already emitted Loading state
                     }
                 }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error getting locations by amenities", e)
             emit(LocationResult.Error(e))
         }
     }
-
+    private fun hasAmenity(location: DogFriendlyLocation, amenity: DogFriendlyLocation.Amenity): Boolean {
+        return when (amenity) {
+            DogFriendlyLocation.Amenity.WATER_FOUNTAIN -> location.hasWaterFountain
+            DogFriendlyLocation.Amenity.WASTE_STATIONS -> location.hasWasteStations
+            DogFriendlyLocation.Amenity.PARKING -> location.hasParking
+            DogFriendlyLocation.Amenity.SEATING -> location.hasSeating
+            DogFriendlyLocation.Amenity.SHADE -> !location.isIndoor
+            DogFriendlyLocation.Amenity.LIGHTING -> location.lightingAvailable
+            DogFriendlyLocation.Amenity.AGILITY_EQUIPMENT -> location.amenities.contains("agility_equipment")
+            DogFriendlyLocation.Amenity.SEPARATE_SMALL_DOG_AREA -> location.amenities.contains("small_dog_area")
+            DogFriendlyLocation.Amenity.WASHING_STATION -> location.amenities.contains("washing_station")
+            DogFriendlyLocation.Amenity.TREATS_AVAILABLE -> location.dogTreats
+            DogFriendlyLocation.Amenity.DOG_MENU -> location.dogMenu
+            DogFriendlyLocation.Amenity.WATER_BOWLS -> location.amenities.contains("water_bowls")
+        }
+    }
+    // Helper extension function for calculateDistance
+    fun calculateDistance(point1: LatLng, point2: LatLng): Float {
+        val results = FloatArray(1)
+        Location.distanceBetween(
+            point1.latitude, point1.longitude,
+            point2.latitude, point2.longitude,
+            results
+        )
+        return results[0]
+    }
     suspend fun reportLocationUpdate(
         placeId: String,
         updates: Map<String, Any>

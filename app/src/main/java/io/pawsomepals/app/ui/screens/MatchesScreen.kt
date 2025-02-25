@@ -1,12 +1,16 @@
 
 package io.pawsomepals.app.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +29,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -44,6 +49,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MaterialTheme.colorScheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -52,21 +58,44 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
+import io.pawsomepals.app.data.model.Dog
 import io.pawsomepals.app.data.model.Match
+import io.pawsomepals.app.data.model.MatchReason
 import io.pawsomepals.app.data.model.MatchStatus
+import io.pawsomepals.app.data.model.MatchType
 import io.pawsomepals.app.data.model.getMatchIcon
 import io.pawsomepals.app.data.model.getReasonIcon
 import io.pawsomepals.app.data.model.getStatusColor
 import io.pawsomepals.app.data.model.getStatusIcon
 import io.pawsomepals.app.viewmodel.MatchesViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.random.Random
+
+sealed class MatchUiState {
+    object Idle : MatchUiState()
+    object Loading : MatchUiState()
+    data class Error(val message: String) : MatchUiState()
+    data class Success(val message: String) : MatchUiState()
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -76,9 +105,10 @@ fun MatchesScreen(
     onChatClick: (String) -> Unit,
     onSchedulePlaydate: (String) -> Unit
 ) {
-    val matches by viewModel.matches.collectAsState()
+    val matches by viewModel.matches.collectAsStateWithLifecycle(initialValue = emptyList())
     val isLoading by viewModel.isLoading.collectAsState()
     var selectedFilter by remember { mutableStateOf<MatchStatus?>(null) }
+    val uiState by viewModel.uiState.collectAsState()
 
     LaunchedEffect(Unit) {
         viewModel.checkAndUpdateExpiredMatches()
@@ -101,7 +131,6 @@ fun MatchesScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // Match Status Filter Chips
             MatchStatusFilterChips(
                 selectedFilter = selectedFilter,
                 onFilterSelected = { selectedFilter = it }
@@ -110,21 +139,40 @@ fun MatchesScreen(
             if (isLoading) {
                 LoadingIndicator()
             } else {
-                MatchList(
-                    matches = matches.filter { match ->
-                        selectedFilter?.let { match.status == it } ?: true
-                    },
-                    onAccept = viewModel::acceptMatch,
-                    onDecline = viewModel::declineMatch,
-                    onRemove = viewModel::removeMatch,
-                    onChatClick = onChatClick,
-                    onSchedulePlaydate = onSchedulePlaydate
-                )
+                val filteredMatches = if (selectedFilter != null) {
+                    matches.filter { it.match.status == selectedFilter }
+                } else {
+                    matches
+                }
+
+                if (filteredMatches.isEmpty()) {
+                    EmptyMatchesState()
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        items(
+                            items = filteredMatches,
+                            key = { it.match.id }
+                        ) { matchWithDetails ->
+                            MatchCard(
+                                matchWithDetails = matchWithDetails,
+                                modifier = Modifier.animateItemPlacement(),
+                                onAccept = { viewModel.acceptMatch(matchWithDetails.match.id) },
+                                onDecline = { viewModel.declineMatch(matchWithDetails.match.id) },
+                                onRemove = { viewModel.removeMatch(matchWithDetails.match.id) },
+                                onChatClick = { onChatClick(matchWithDetails.match.id) },
+                                onSchedulePlaydate = { onSchedulePlaydate(matchWithDetails.match.id) }
+                            )
+                        }
+                    }
+                }
             }
         }
     }
 }
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MatchStatusFilterChips(
@@ -161,46 +209,175 @@ private fun MatchStatusFilterChips(
         }
     }
 }
-
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MatchList(
-    matches: List<Match>,
-    onAccept: (String) -> Unit,
-    onDecline: (String) -> Unit,
-    onRemove: (String) -> Unit,
-    onChatClick: (String) -> Unit,
-    onSchedulePlaydate: (String) -> Unit
+private fun MatchInfoSection(
+    matchType: MatchType,
+    compatibilityScore: Double,
+    timestamp: Long
 ) {
-    if (matches.isEmpty()) {
-        EmptyMatchesState()
-    } else {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            items(
-                items = matches,
-                key = { it.id }
-            ) { match ->
-                MatchCard(
-                    match = match,
-                    modifier = Modifier.animateItemPlacement(),
-                    onAccept = { onAccept(match.id) },
-                    onDecline = { onDecline(match.id) },
-                    onRemove = { onRemove(match.id) },
-                    onChatClick = { onChatClick(match.id) },
-                    onSchedulePlaydate = { onSchedulePlaydate(match.dog2Id) }
-                )
-            }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(
+                text = matchType.displayName,
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(
+                text = "Compatibility: ${(compatibilityScore * 100).toInt()}%",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "Matched ${formatTimestamp(timestamp)}",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }
 
 @Composable
-private fun MatchCard(
+private fun MatchStatusSection(
+    status: MatchStatus,
+    hasUnreadMessages: Boolean,
+    expiryTimestamp: Long
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = Color(status.getStatusColor().replace("#", "FF", true).toLong(16))
+        ) {
+            Text(
+                text = "${status.getStatusIcon()} ${status.name.lowercase().capitalize()}",
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White
+            )
+        }
+
+        Text(
+            text = "Expires in ${getTimeRemaining(expiryTimestamp)}",
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+@Composable
+private fun PlaydatePreferences(
+    location: String?,
+    time: String?
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(8.dp)) {
+            Text(
+                text = "Playdate Preferences",
+                style = MaterialTheme.typography.titleSmall
+            )
+            if (location != null) {
+                Text("📍 Preferred Location: $location")
+            }
+            if (time != null) {
+                Text("🕒 Preferred Time: $time")
+            }
+        }
+    }
+}
+@Composable
+private fun MatchCardContent(
     match: Match,
+    otherDog: Dog,
+    distanceAway: String,
+    expanded: Boolean,
+    onExpandClick: () -> Unit,
+    onAccept: () -> Unit,
+    onDecline: () -> Unit,
+    onRemove: () -> Unit,
+    onChatClick: () -> Unit,
+    onSchedulePlaydate: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+    ) {
+        DogProfileHeader(
+            dog = otherDog,
+            distanceAway = distanceAway
+        )
+
+        MatchInfoSection(
+            matchType = match.matchType,
+            compatibilityScore = match.compatibilityScore,
+            timestamp = match.timestamp
+        )
+
+        MatchStatusSection(
+            status = match.status,
+            hasUnreadMessages = match.hasUnreadMessages,
+            expiryTimestamp = match.expiryTimestamp
+        )
+
+        if (expanded) {
+            if (match.matchReasons.isNotEmpty()) {
+                MatchReasonsList(reasons = match.matchReasons)
+            }
+
+            if (match.preferredPlaydateLocation != null || match.preferredPlaydateTime != null) {
+                PlaydatePreferences(
+                    location = match.preferredPlaydateLocation,
+                    time = match.preferredPlaydateTime
+                )
+            }
+
+            LocationDetails(
+                dog1Lat = match.dog1Latitude,
+                dog1Long = match.dog1Longitude,
+                dog2Lat = match.dog2Latitude,
+                dog2Long = match.dog2Longitude,
+                distance = match.locationDistance
+            )
+        }
+
+        MatchActions(
+            match = match,
+            expanded = expanded,
+            onExpandClick = onExpandClick,
+            onAccept = onAccept,
+            onDecline = onDecline,
+            onRemove = onRemove,
+            onChatClick = onChatClick,
+            onSchedulePlaydate = onSchedulePlaydate
+        )
+    }
+}
+
+
+private fun formatTimestamp(timestamp: Long): String {
+    val now = System.currentTimeMillis()
+    val diff = now - timestamp
+    return when {
+        diff < 60_000 -> "just now"
+        diff < 3600_000 -> "${diff / 60_000}m ago"
+        diff < 86400_000 -> "${diff / 3600_000}h ago"
+        else -> "${diff / 86400_000}d ago"
+    }
+}
+
+@Composable
+private fun MatchCard(
+    matchWithDetails: Match.MatchWithDetails,
     modifier: Modifier = Modifier,
     onAccept: () -> Unit,
     onDecline: () -> Unit,
@@ -208,54 +385,282 @@ private fun MatchCard(
     onChatClick: () -> Unit,
     onSchedulePlaydate: () -> Unit
 ) {
+    var isAccepting by remember { mutableStateOf(false) }
+    var isDeclining by remember { mutableStateOf(false) }
+    var showConfetti by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
+    var isVisible by remember { mutableStateOf(true) }
 
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .animateContentSize(),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(match.matchType.getMatchColor().replace("#", "FF", true).toLong(16))
-                .copy(alpha = 0.15f)
-        ),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-        ) {
-            // Match Header
-            MatchHeader(match)
+    val scope = rememberCoroutineScope()
 
-            Spacer(modifier = Modifier.height(8.dp))
+    val scale by animateFloatAsState(
+        targetValue = when {
+            isAccepting -> 1.05f
+            isDeclining -> 0.8f
+            else -> 1f
+        },
+        label = "scale"
+    )
 
-            // Match Details
-            AnimatedVisibility(
-                visible = expanded,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut()
-            ) {
-                MatchDetails(match)
+    val rotation by animateFloatAsState(
+        targetValue = when {
+            isAccepting -> 2f
+            isDeclining -> -2f
+            else -> 0f
+        },
+        label = "rotation"
+    )
+
+    val alpha by animateFloatAsState(
+        targetValue = if (isVisible) 1f else 0f,
+        animationSpec = tween(durationMillis = 300),
+        finishedListener = {
+            if (!isVisible) {
+                // Once fade out is complete, trigger the appropriate action
+                when {
+                    isAccepting -> onAccept()
+                    isDeclining -> onDecline()
+                }
             }
+        },
+        label = "alpha"
+    )
 
-            Spacer(modifier = Modifier.height(8.dp))
+    fun handleAccept() {
+        isAccepting = true
+        showConfetti = true
+        scope.launch {
+            delay(800)
+            isVisible = false // Start fade out
+        }
+    }
 
-            // Match Actions
-            MatchActions(
-                match = match,
-                expanded = expanded,
-                onExpandClick = { expanded = !expanded },
-                onAccept = onAccept,
-                onDecline = onDecline,
-                onRemove = onRemove,
-                onChatClick = onChatClick,
-                onSchedulePlaydate = onSchedulePlaydate
+    fun handleDecline() {
+        isDeclining = true
+        scope.launch {
+            delay(300)
+            isVisible = false // Start fade out
+        }
+    }
+
+    if (alpha > 0f) { // Only render if not completely faded out
+        CelebrationEffect(
+            show = showConfetti,
+            modifier = modifier
+        ) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .scale(scale)
+                    .rotate(rotation)
+                    .animateContentSize()
+                    .alpha(alpha),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(matchWithDetails.match.matchType.getMatchColor()
+                        .replace("#", "FF", true).toLong(16))
+                        .copy(alpha = 0.15f)
+                ),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                MatchCardContent(
+                    match = matchWithDetails.match,
+                    otherDog = matchWithDetails.otherDog,
+                    distanceAway = matchWithDetails.distanceAway,
+                    expanded = expanded,
+                    onExpandClick = { expanded = !expanded },
+                    onAccept = { handleAccept() },
+                    onDecline = { handleDecline() },
+                    onRemove = onRemove,
+                    onChatClick = onChatClick,
+                    onSchedulePlaydate = onSchedulePlaydate
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ConfettiOverlay(
+    modifier: Modifier = Modifier,
+    particleCount: Int = 20,
+    colors: List<Color> = listOf(
+        Color.Red, Color.Blue, Color.Green, Color.Yellow, Color.Magenta, Color.Cyan
+    )
+) {
+    Box(modifier = modifier) {
+        repeat(particleCount) { index ->
+            ConfettiParticle(
+                delay = index * 50,
+                colors = colors
             )
         }
     }
 }
 
+@Composable
+private fun ConfettiParticle(
+    delay: Int,
+    colors: List<Color>,
+    modifier: Modifier = Modifier
+) {
+    // States for particle animation
+    var offsetY by remember { mutableFloatStateOf(0f) }
+    val offsetX = remember { Random.nextFloat() * 500f }
+    val rotation = remember { Random.nextFloat() * 360f }
+    val size = remember { Random.nextFloat() * 12f + 8f }
+    val color = remember { colors[Random.nextInt(colors.size)] }
+
+    // Create infinite transition for continuous animation
+    val infiniteTransition = rememberInfiniteTransition(label = "particle")
+
+    // Animate vertical movement
+    val yAnimation by infiniteTransition.animateFloat(
+        initialValue = -50f,
+        targetValue = 1000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = 2000,
+                delayMillis = delay,
+                easing = FastOutLinearInEasing
+            ),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "y-position"
+    )
+
+    // Animate rotation
+    val rotationAnimation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = 1000,
+                delayMillis = delay,
+                easing = LinearEasing
+            ),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "rotation"
+    )
+
+    Canvas(modifier = modifier.fillMaxSize()) {
+        rotate(rotationAnimation) {
+            drawCircle(
+                color = color.copy(alpha = 0.8f),
+                radius = size.dp.toPx(),
+                center = Offset(offsetX, yAnimation)
+            )
+        }
+    }
+}
+
+// Extension to use in MatchCard
+@Composable
+fun CelebrationEffect(
+    show: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    Box(modifier = modifier) {
+        content()
+        if (show) {
+            ConfettiOverlay(
+                modifier = Modifier
+                    .matchParentSize()
+                    .alpha(0.7f),
+                particleCount = 30,
+                colors = listOf(
+                    Color(0xFF1E88E5), // Blue
+                    Color(0xFF43A047), // Green
+                    Color(0xFFFFB300), // Yellow
+                    Color(0xFFE53935), // Red
+                    Color(0xFF5E35B1)  // Purple
+                )
+            )
+        }
+    }
+}
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MatchReasonsList(reasons: List<MatchReason>) {
+    Column(
+        modifier = Modifier.padding(vertical = 8.dp)
+    ) {
+        Text(
+            text = "Why You Matched",
+            style = MaterialTheme.typography.titleSmall
+        )
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            reasons.forEach { reason ->
+                AssistChip(
+                    onClick = { },
+                    label = { Text(reason.description) },
+                    leadingIcon = { Text(reason.getReasonIcon()) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocationDetails(
+    dog1Lat: Double?,
+    dog1Long: Double?,
+    dog2Lat: Double?,
+    dog2Long: Double?,
+    distance: Double?
+) {
+    if (distance != null && dog1Lat != null && dog1Long != null && dog2Lat != null && dog2Long != null) {
+        Column(
+            modifier = Modifier.padding(vertical = 8.dp)
+        ) {
+            Text(
+                text = "Location Details",
+                style = MaterialTheme.typography.titleSmall
+            )
+            Text(
+                text = "Distance: ${String.format("%.1f", distance)} km",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+    }
+}
+@Composable
+private fun DogProfileHeader(dog: Dog, distanceAway: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AsyncImage(
+                model = dog.profilePictureUrl,  // Changed from profileImageUrl
+                contentDescription = "Dog profile picture",
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column {
+                Text(
+                    text = dog.name,
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    text = "${dog.age}y • ${dog.breed}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+        Text(
+            text = "📍 $distanceAway",
+            style = MaterialTheme.typography.bodyMedium
+        )
+    }
+}
 @Composable
 private fun MatchHeader(match: Match) {
     Row(
@@ -364,7 +769,7 @@ private fun MatchActions(
                 Button(
                     onClick = onAccept,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
+                        containerColor = colorScheme.primary
                     )
                 ) {
                     Text("Accept")
@@ -372,7 +777,7 @@ private fun MatchActions(
                 Button(
                     onClick = onDecline,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error
+                        containerColor = colorScheme.error
                     )
                 ) {
                     Text("Decline")
@@ -382,7 +787,7 @@ private fun MatchActions(
                 Button(
                     onClick = onChatClick,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.secondary
+                        containerColor = colorScheme.secondary
                     )
                 ) {
                     Icon(Icons.Default.Chat, contentDescription = null)
@@ -392,7 +797,7 @@ private fun MatchActions(
                 Button(
                     onClick = onSchedulePlaydate,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.tertiary
+                        containerColor = colorScheme.tertiary
                     )
                 ) {
                     Icon(Icons.Default.CalendarToday, contentDescription = null)
@@ -404,7 +809,7 @@ private fun MatchActions(
                 Button(
                     onClick = onRemove,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error
+                        containerColor = colorScheme.error
                     )
                 ) {
                     Text("Remove")
@@ -437,7 +842,7 @@ private fun EmptyMatchesState() {
                 imageVector = Icons.Default.Pets,
                 contentDescription = null,
                 modifier = Modifier.size(64.dp),
-                tint = MaterialTheme.colorScheme.primary
+                tint = colorScheme.primary
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
@@ -450,7 +855,7 @@ private fun EmptyMatchesState() {
                 text = "Keep swiping to find the perfect playdate for your pup!",
                 style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = colorScheme.onSurfaceVariant
             )
         }
     }

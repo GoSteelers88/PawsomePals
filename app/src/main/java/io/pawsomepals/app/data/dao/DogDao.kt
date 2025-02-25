@@ -11,11 +11,13 @@ import io.pawsomepals.app.data.model.Dog
 
 @Dao
 interface DogDao {
-    @Query("SELECT * FROM dogs WHERE id = :dogId")
-    suspend fun getDogById(dogId: String): Dog?
+    @Query("SELECT * FROM dogs WHERE ownerId = :ownerId LIMIT 1")
+    suspend fun getDogByOwnerId(ownerId: String): Dog?
 
     @Query("SELECT * FROM dogs WHERE ownerId = :ownerId")
-    suspend fun getDogByOwnerId(ownerId: String): Dog?
+    suspend fun getAllDogsByOwnerId(ownerId: String): List<Dog>
+    @Query("SELECT * FROM dogs WHERE id = :dogId")
+    suspend fun getDogById(dogId: String): Dog?
 
     @Transaction
     @Insert(onConflict = OnConflictStrategy.REPLACE)

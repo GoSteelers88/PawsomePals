@@ -165,7 +165,7 @@ interface DogFriendlyLocationDao {
     """)
     suspend fun getLocationsByIndoorStatus(isIndoor: Boolean): List<DogFriendlyLocation>
 
-    @Query("SELECT * FROM dog_friendly_locations WHERE communityRating IS NOT NULL")
+    @Query("SELECT * FROM dog_friendly_locations WHERE isFavorite = 1")
     fun getFavoriteLocations(): List<DogFriendlyLocation>
 
     @Query("""
@@ -185,4 +185,35 @@ interface DogFriendlyLocationDao {
         WHERE lastUpdated > :since
     """)
     suspend fun getRecentLocationsCount(since: Long): Int
+    @Query("UPDATE dog_friendly_locations SET isFavorite = :isFavorite WHERE placeId = :placeId")
+    suspend fun updateFavoriteStatus(placeId: String, isFavorite: Boolean)
+
+    @Query("SELECT isFavorite FROM dog_friendly_locations WHERE placeId = :placeId")
+    suspend fun isFavorite(placeId: String): Boolean?
+
+    // Add a query to get nearby favorite locations
+    @Query("""
+        SELECT *, 
+        ((:currentLat - latitude) * (:currentLat - latitude) + 
+        (:currentLng - longitude) * (:currentLng - longitude)) as distance 
+        FROM dog_friendly_locations 
+        WHERE isFavorite = 1
+        AND ((:currentLat - latitude) * (:currentLat - latitude) + 
+        (:currentLng - longitude) * (:currentLng - longitude)) <= (:radiusInDegrees * :radiusInDegrees)
+        ORDER BY distance ASC
+    """)
+    suspend fun getNearbyFavoriteLocations(
+        currentLat: Double,
+        currentLng: Double,
+        radiusInDegrees: Double
+    ): List<DogFriendlyLocation>
+
+    // Add transaction to toggle favorite status
+    @Transaction
+    suspend fun toggleFavorite(placeId: String): Boolean {
+        val currentStatus = isFavorite(placeId) ?: false
+        val newStatus = !currentStatus
+        updateFavoriteStatus(placeId, newStatus)
+        return newStatus
+    }
 }

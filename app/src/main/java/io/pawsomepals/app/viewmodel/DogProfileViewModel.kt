@@ -5,23 +5,28 @@ import android.content.Context
 import android.net.Uri
 import android.os.Environment
 import android.util.Log
+import androidx.camera.view.PreviewView
 import androidx.core.content.FileProvider
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.storage.FirebaseStorage
+import dagger.hilt.android.lifecycle.HiltViewModel
 import io.pawsomepals.app.data.DataManager
 import io.pawsomepals.app.data.model.Dog
 import io.pawsomepals.app.data.repository.DogProfileRepository
 import io.pawsomepals.app.data.repository.PhotoRepository
 import io.pawsomepals.app.data.repository.UserRepository
 import io.pawsomepals.app.service.MatchingService
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.FirebaseUser
-import com.google.firebase.storage.FirebaseStorage
-import dagger.hilt.android.lifecycle.HiltViewModel
+import io.pawsomepals.app.utils.CameraManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -38,7 +43,9 @@ class DogProfileViewModel @Inject constructor(
     private val firebaseAuth: FirebaseAuth,
     private val storage: FirebaseStorage,
     private val dataManager: DataManager,
-    private val matchingService: MatchingService
+    private val matchingService: MatchingService,
+    private val cameraManager: CameraManager // Add CameraManager
+
 ) : ViewModel() {
 
     sealed class CompatibilityState {
@@ -49,6 +56,15 @@ class DogProfileViewModel @Inject constructor(
         data class Error(val message: String) : CompatibilityState()
     }
 
+    private val _cameraState = MutableStateFlow<CameraUIState>(CameraUIState.Initial)
+    val cameraState: StateFlow<CameraUIState> = _cameraState.asStateFlow()
+
+    sealed class CameraUIState {
+        object Initial : CameraUIState()
+        object Preview : CameraUIState()
+        data class Error(val message: String) : CameraUIState()
+        data class PhotoTaken(val uri: Uri) : CameraUIState()
+    }
     sealed class DogProfileState {
         object Initial : DogProfileState()
         object Loading : DogProfileState()
@@ -119,6 +135,21 @@ class DogProfileViewModel @Inject constructor(
         return r * c
     }
 
+    init {
+        viewModelScope.launch {
+            try {
+                val userId = firebaseAuth.currentUser?.uid
+                if (userId != null) {
+                    loadUserDogs()
+                } else {
+                    _dogProfileState.value = DogProfileState.Error("No user logged in")
+                }
+            } catch (e: Exception) {
+                Log.e("DogProfileViewModel", "Error initializing DogProfileViewModel", e)
+                _dogProfileState.value = DogProfileState.Error("Error loading dogs: ${e.message}")
+            }
+        }
+    }
 
     fun checkCompatibility(otherDogId: String) {
         viewModelScope.launch {
@@ -162,6 +193,74 @@ class DogProfileViewModel @Inject constructor(
     }
 
 
+
+    fun capturePhoto() {
+        viewModelScope.launch {
+            try {
+                val photoUri = cameraManager.capturePhoto()
+                photoUri?.let {
+                    _cameraState.value = CameraUIState.PhotoTaken(it)
+                    // Get current dog and index
+                    _currentDog.value?.let { dog ->
+                        updateDogProfilePicture(0, it, dog.id) // Added dog.id parameter
+                    }
+                }
+            } catch (e: Exception) {
+                _cameraState.value = CameraUIState.Error(e.message ?: "Failed to capture photo")
+            }
+        }
+    }
+
+    fun updateDogProfilePicture(photoIndex: Int, photoUri: Uri, dogId: String) {
+        viewModelScope.launch {
+            _dogProfileState.value = DogProfileState.Loading
+            try {
+                // First, ensure we have the current dog
+                val dog = _userDogs.value.find { it.id == dogId }
+                    ?: dogProfileRepository.getDogById(dogId).getOrNull()
+                    ?: throw IllegalStateException("No dog found with ID: $dogId")
+
+                Log.d("DogProfileViewModel", "Updating photo for dog: ${dog.id}")
+
+                // Upload to Firebase through PhotoRepository
+                val photoUrl = photoRepository.uploadDogPhoto(dog.id, photoUri)
+
+                // Update the dog's photo URLs list
+                val updatedPhotoUrls = dog.photoUrls.toMutableList()
+                if (photoIndex < updatedPhotoUrls.size) {
+                    updatedPhotoUrls[photoIndex] = photoUrl
+                } else {
+                    updatedPhotoUrls.add(photoUrl)
+                }
+
+                // Create updated dog profile
+                val updatedDog = dog.copy(
+                    photoUrls = updatedPhotoUrls,
+                    profilePictureUrl = if (photoIndex == 0) photoUrl else dog.profilePictureUrl
+                )
+
+                // Update through DataManager
+                withContext(Dispatchers.IO) {
+                    dataManager.createOrUpdateDogProfile(updatedDog)
+                }
+
+                // Update all relevant state
+                _dogProfile.value = updatedDog
+                _currentDog.value = updatedDog
+                _userDogs.value = _userDogs.value.map {
+                    if (it.id == updatedDog.id) updatedDog else it
+                }
+
+                _dogProfileState.value = DogProfileState.Success("Dog photo updated successfully")
+                Log.d("DogProfileViewModel", "Successfully updated dog photo")
+
+            } catch (e: Exception) {
+                Log.e("DogProfileViewModel", "Error updating dog photo", e)
+                _dogProfileState.value =
+                    DogProfileState.Error("Failed to update dog photo: ${e.message}")
+            }
+        }
+    }
     fun createDogProfile(dog: Dog) {
         viewModelScope.launch {
             _dogProfileState.value = DogProfileState.Loading
@@ -307,7 +406,7 @@ class DogProfileViewModel @Inject constructor(
                 "Size" -> currentProfile.copy(size = value)
                 "Energy Level" -> currentProfile.copy(energyLevel = value)
                 "Friendliness" -> currentProfile.copy(friendliness = value)
-                "Spayed/Neutered" -> currentProfile.copy(isSpayedNeutered = value)
+                "Spayed/Neutered" -> currentProfile.copy(isSpayedNeutered = value.toBooleanStrictOrNull() ?: currentProfile.isSpayedNeutered) // Fix here
                 "Friendly with dogs" -> currentProfile.copy(friendlyWithDogs = value)
                 "Friendly with children" -> currentProfile.copy(friendlyWithChildren = value)
                 "Special needs" -> currentProfile.copy(specialNeeds = value)

@@ -1,81 +1,167 @@
 package io.pawsomepals.app.utils
 
-import android.content.ContentValues.TAG
 import android.util.Log
-import io.pawsomepals.app.BuildConfig  // Add this import
-
 import com.google.firebase.ktx.Firebase
 import com.google.firebase.remoteconfig.FirebaseRemoteConfig
 import com.google.firebase.remoteconfig.ktx.remoteConfig
 import com.google.firebase.remoteconfig.ktx.remoteConfigSettings
+import io.pawsomepals.app.BuildConfig
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeout
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.resume
+import kotlin.time.Duration.Companion.seconds
 
 @Singleton
 class RemoteConfigManager @Inject constructor() {
-    // Get Firebase Remote Config instance
     private val remoteConfig: FirebaseRemoteConfig = Firebase.remoteConfig
+    private var isInitialized = false
 
     companion object {
-        const val KEY_RECAPTCHA = "RECAPTCHA_SITE_KEY"
-        const val KEY_MAPS = "MAPS_API_KEY"
-        const val KEY_GOOGLE_SIGN_IN = "GOOGLE_SIGN_IN_API_KEY"
-        const val KEY_FACEBOOK_APP = "FACEBOOK_APP_ID"
-        const val KEY_FACEBOOK_TOKEN = "FACEBOOK_CLIENT_TOKEN"
-        const val KEY_OPENAI = "OPENAI_API_KEY"
-        const val KEY_WEATHER = "WEATHER_API_KEY"
-
-        // Default fetch interval
+        private const val TAG = "RemoteConfigManager"
+        private const val DEFAULT_TIMEOUT_SECONDS = 10L
         private const val DEFAULT_FETCH_INTERVAL = 3600L // 1 hour
+        private const val DEBUG_FETCH_INTERVAL = 0L
+
+        // Config Keys - these should match exactly with Firebase Remote Config parameter names
+        const val KEY_MAPS = "maps_api_key"
+        const val KEY_GOOGLE_SIGN_IN = "google_sign_in_key"
+        const val KEY_RECAPTCHA = "recaptcha_key"
+        const val KEY_FACEBOOK_APP = "facebook_app_id"
+        const val KEY_FACEBOOK_TOKEN = "facebook_token"
+        const val KEY_OPENAI = "openai_key"
+        const val KEY_WEATHER = "weather_key"
+
+        // Default Values - Consider moving to separate sealed class/object
+        private val DEFAULT_CONFIG = mapOf(
+            KEY_MAPS to BuildConfig.DEFAULT_MAPS_API_KEY,
+            KEY_GOOGLE_SIGN_IN to BuildConfig.DEFAULT_GOOGLE_SIGN_IN_KEY,
+            KEY_RECAPTCHA to BuildConfig.DEFAULT_RECAPTCHA_KEY,
+            KEY_FACEBOOK_APP to BuildConfig.DEFAULT_FACEBOOK_APP_ID,
+            KEY_FACEBOOK_TOKEN to BuildConfig.DEFAULT_FACEBOOK_TOKEN,
+            KEY_OPENAI to BuildConfig.DEFAULT_OPENAI_KEY,
+            KEY_WEATHER to BuildConfig.DEFAULT_WEATHER_KEY
+        )
     }
 
     init {
-        setupDefaultConfig()
+        initializeDefaults()
     }
 
-    private fun setupDefaultConfig() {
-        val configSettings = remoteConfigSettings {
-            minimumFetchIntervalInSeconds = if (BuildConfig.DEBUG) 0 else DEFAULT_FETCH_INTERVAL
-        }
-        remoteConfig.setConfigSettingsAsync(configSettings)
-
-        val defaults = mapOf(
-            KEY_RECAPTCHA to "6LcM4FUqAAAAAPw2npJ8wOOsaSlqw8B_ju6CT67i",
-            KEY_MAPS to "AIzaSyCUaMjo8iY2B6roaMJnAx2CVBfBx7zgw6E",
-            KEY_GOOGLE_SIGN_IN to "455388576182-nb7hkru3benl1qe38epcccjd0kurebtl.apps.googleusercontent.com",
-            KEY_FACEBOOK_APP to "527141699750137",
-            KEY_FACEBOOK_TOKEN to "5f8a74941436f7da5230b70876731479",
-            KEY_OPENAI to "sk-OBO10XT3CzWpM-ulVeVmWU-EMVnO5wx2jb1IcmZf2bT3BlbkFJA49zMWGgDY559Dd3mdPNBiM-47ilg5NvqnGJOpZQUA",
-            KEY_WEATHER to "aa553d06e53c43aea30171022240810"
-        )
-        remoteConfig.setDefaultsAsync(defaults)
-    }
-
-    fun initialize() {
-        remoteConfig.fetchAndActivate().addOnCompleteListener { task ->
-            if (task.isSuccessful) {
-                // Config params updated
-            }
-        }
-    }
-    fun fetchAndActivate(onComplete: (Boolean) -> Unit) {
-        remoteConfig.fetchAndActivate()
-            .addOnCompleteListener { task ->
-                if (task.isSuccessful) {
-                    Log.d(TAG, "Config params updated: ${task.result}")
+    private fun initializeDefaults() {
+        try {
+            val configSettings = remoteConfigSettings {
+                minimumFetchIntervalInSeconds = if (BuildConfig.DEBUG) {
+                    DEBUG_FETCH_INTERVAL
                 } else {
-                    Log.e(TAG, "Config params update failed: ${task.exception?.message}")
+                    DEFAULT_FETCH_INTERVAL
                 }
-                onComplete(task.isSuccessful)
             }
+            remoteConfig.setConfigSettingsAsync(configSettings)
+            remoteConfig.setDefaultsAsync(DEFAULT_CONFIG)
+            Log.d(TAG, "Remote config defaults initialized")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize remote config defaults", e)
+        }
     }
 
-    // Getter methods
-    fun getRecaptchaKey(): String = remoteConfig.getString(KEY_RECAPTCHA)
-    fun getMapsKey(): String = remoteConfig.getString(KEY_MAPS)
-    fun getGoogleSignInKey(): String = remoteConfig.getString(KEY_GOOGLE_SIGN_IN)
-    fun getFacebookAppId(): String = remoteConfig.getString(KEY_FACEBOOK_APP)
-    fun getFacebookClientToken(): String = remoteConfig.getString(KEY_FACEBOOK_TOKEN)
-    fun getOpenAIKey(): String = remoteConfig.getString(KEY_OPENAI)
-    fun getWeatherKey(): String = remoteConfig.getString(KEY_WEATHER)
+    suspend fun ensureInitialized(): Boolean = try {
+        withTimeout(DEFAULT_TIMEOUT_SECONDS.seconds) {
+            if (isInitialized) return@withTimeout true
+
+            suspendCancellableCoroutine { continuation ->
+                remoteConfig.fetchAndActivate()
+                    .addOnCompleteListener { task ->
+                        if (task.isSuccessful) {
+                            isInitialized = true
+                            logConfigValues()
+                            continuation.resume(true)
+                        } else {
+                            Log.e(TAG, "Remote config initialization failed", task.exception)
+                            continuation.resume(false)
+                        }
+                    }
+            }
+        }
+    } catch (e: Exception) {
+        Log.e(TAG, "Error ensuring remote config initialization", e)
+        false
+    }
+
+    private fun logConfigValues() {
+        Log.d(TAG, """
+            Remote Config Values:
+            Maps API Key Valid: ${isValidMapsKey(getMapsKey())}
+            Google Sign In Key Present: ${getGoogleSignInKey().isNotBlank()}
+            Recaptcha Key Present: ${getRecaptchaKey().isNotBlank()}
+            Facebook App ID Present: ${getFacebookAppId().isNotBlank()}
+            Facebook Token Present: ${getFacebookClientToken().isNotBlank()}
+            Weather Key Present: ${getWeatherKey().isNotBlank()}
+        """.trimIndent())
+    }
+
+    private fun isValidMapsKey(key: String): Boolean {
+        return key.isNotBlank() &&
+                key.startsWith("AIza") &&
+                key.length >= 39 &&
+                !key.contains("YOUR-KEY-HERE") &&
+                !key.contains("default") &&
+                !key.contains("placeholder")
+    }
+
+    // Improved API Key Getters with validation
+    // In RemoteConfigManager.kt, update getMapsKey():
+    fun getMapsKey(): String {
+        val key = remoteConfig.getString(KEY_MAPS)
+        Log.d(TAG, """
+        Maps Key Status:
+        Key Length: ${key.length}
+        First/Last 5: ${key.take(5)}...${key.takeLast(5)}
+        Valid Format: ${isValidMapsKey(key)}
+        From Default: ${key == BuildConfig.DEFAULT_MAPS_API_KEY}
+    """.trimIndent())
+        return key
+    }
+
+    fun getGoogleSignInKey(): String = getConfigValue(KEY_GOOGLE_SIGN_IN)
+    fun getRecaptchaKey(): String = getConfigValue(KEY_RECAPTCHA)
+    fun getFacebookAppId(): String = getConfigValue(KEY_FACEBOOK_APP)
+    fun getFacebookClientToken(): String = getConfigValue(KEY_FACEBOOK_TOKEN)
+    fun getOpenAIKey(): String = getConfigValue(KEY_OPENAI)
+    fun getWeatherKey(): String = getConfigValue(KEY_WEATHER)
+
+    private fun getConfigValue(key: String): String {
+        return try {
+            if (!isInitialized) return DEFAULT_CONFIG[key] ?: ""
+            val value = remoteConfig.getString(key)
+            value.ifBlank { DEFAULT_CONFIG[key] ?: "" }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error retrieving config value for key: $key", e)
+            DEFAULT_CONFIG[key] ?: ""
+        }
+    }
+
+    // For testing and debugging
+    @Throws(IllegalStateException::class)
+    suspend fun forceRefresh(): Boolean = try {
+        withTimeout(DEFAULT_TIMEOUT_SECONDS.seconds) {
+            suspendCancellableCoroutine { continuation ->
+                remoteConfig.fetch(0)
+                    .continueWithTask { remoteConfig.activate() }
+                    .addOnCompleteListener { task ->
+                        if (task.isSuccessful) {
+                            logConfigValues()
+                            continuation.resume(true)
+                        } else {
+                            Log.e(TAG, "Force refresh failed", task.exception)
+                            continuation.resume(false)
+                        }
+                    }
+            }
+        }
+    } catch (e: Exception) {
+        Log.e(TAG, "Error during force refresh", e)
+        false
+    }
 }

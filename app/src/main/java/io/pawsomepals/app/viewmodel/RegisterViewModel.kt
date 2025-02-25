@@ -1,9 +1,9 @@
 package io.pawsomepals.app.viewmodel
 
-import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.pawsomepals.app.data.DataManager
 import io.pawsomepals.app.data.repository.AuthRepository
 import io.pawsomepals.app.data.repository.UserRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,7 +14,10 @@ import javax.inject.Inject
 @HiltViewModel
 class RegisterViewModel @Inject constructor(
     private val authRepository: AuthRepository,
-    private val userRepository: UserRepository
+    private val userRepository: UserRepository,
+    private val dataManager: DataManager,
+
+
 ) : ViewModel() {
 
     private val _isLoading = MutableStateFlow(false)
@@ -37,51 +40,40 @@ class RegisterViewModel @Inject constructor(
                 _isLoading.value = true
                 _error.value = null
 
-                // 1. Validate inputs
                 if (!validateInputs(username, email, password, confirmPassword)) {
                     return@launch
                 }
 
-                Log.d("RegisterViewModel", "Attempting to register user: $username")
-
-                // 2. Create user in Firebase and Firestore
-                val result = authRepository.createUserInFirestore(
+                authRepository.createUserInFirestore(
                     email = email,
                     password = password,
                     username = username,
                     petName = petName
-                )
-
-                result.fold(
-                    onSuccess = { firebaseUser ->
-                        Log.d("RegisterViewModel", "User registered successfully: ${firebaseUser.uid}")
-                        onSuccess()
-                    },
-                    onFailure = { exception ->
-                        Log.e("RegisterViewModel", "Registration failed", exception)
-                        val errorMessage = when {
-                            exception.message?.contains("email already in use", ignoreCase = true) == true ->
-                                "This email is already registered"
-                            exception.message?.contains("weak password", ignoreCase = true) == true ->
-                                "Password must be at least 6 characters long"
-                            exception.message?.contains("invalid email", ignoreCase = true) == true ->
-                                "Please enter a valid email address"
-                            else -> exception.message ?: "Registration failed"
-                        }
-                        _error.value = errorMessage
-                        onError(errorMessage)
-                    }
+                ).fold(
+                    onSuccess = { onSuccess() },
+                    onFailure = { handleRegistrationError(it, onError) }
                 )
             } catch (e: Exception) {
-                Log.e("RegisterViewModel", "Unexpected error during registration", e)
-                val errorMessage = e.message ?: "An unexpected error occurred"
-                _error.value = errorMessage
-                onError(errorMessage)
+                handleRegistrationError(e, onError)
             } finally {
                 _isLoading.value = false
             }
         }
     }
+    private fun handleRegistrationError(e: Throwable, onError: (String) -> Unit) {
+        val errorMessage = when {
+            e.message?.contains("email already in use", ignoreCase = true) == true ->
+                "This email is already registered"
+            e.message?.contains("weak password", ignoreCase = true) == true ->
+                "Password must be at least 6 characters long"
+            e.message?.contains("invalid email", ignoreCase = true) == true ->
+                "Please enter a valid email address"
+            else -> e.message ?: "Registration failed"
+        }
+        _error.value = errorMessage
+        onError(errorMessage)
+    }
+
 
     private fun validateInputs(
         username: String,

@@ -15,6 +15,8 @@ data class Message(
     val senderId: String = "",
     val content: String = "",
     val timestamp: Long = System.currentTimeMillis(),
+    val senderName: String = "",  // Add this field for username display
+
     // Enhanced fields
     val type: MessageType = MessageType.TEXT,
     val status: MessageStatus = MessageStatus.SENT,
@@ -23,6 +25,7 @@ data class Message(
     val isFromCurrentUser: Boolean = false  // Add this
 
 ) {
+
     // No-argument constructor required by Firebase
     constructor() : this("", "", "", "")
 
@@ -59,6 +62,8 @@ data class Message(
         "chatId" to chatId,
         "senderId" to senderId,
         "content" to content,
+        "senderName" to senderName,  // Add this to the map
+
         "timestamp" to timestamp,
         "type" to type.name,
         "status" to status.name,
@@ -69,6 +74,7 @@ data class Message(
 
 enum class MessageType {
     TEXT,
+    LOCATION,
     IMAGE,
     SYSTEM,
     PLAYDATE_SUGGESTION,
@@ -82,6 +88,7 @@ enum class MessageType {
 
     fun getIcon(): String = when (this) {
         TEXT -> "💭"
+        LOCATION -> "LOC"
         IMAGE -> "🖼️"
         SYSTEM -> "ℹ️"
         PLAYDATE_SUGGESTION -> "🎯"

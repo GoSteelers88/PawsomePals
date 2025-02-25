@@ -2,6 +2,7 @@ package io.pawsomepals.app.ui.screens.playdate.components
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -11,166 +12,166 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import io.pawsomepals.app.data.model.DogFriendlyLocation
 import io.pawsomepals.app.service.location.LocationSearchService
-import io.pawsomepals.app.ui.screens.playdate.viewmodels.LocationSearchViewModel
+import io.pawsomepals.app.viewmodel.LocationPermissionHandler
+import io.pawsomepals.app.viewmodel.LocationSearchViewModel
+import kotlinx.coroutines.launch
+import android.content.Intent as AndroidIntent
+import android.net.Uri as AndroidUri
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LocationSearchScreen(
     viewModel: LocationSearchViewModel = hiltViewModel(),
-    onLocationSelected: (DogFriendlyLocation) -> Unit
+    onLocationSelected: (DogFriendlyLocation) -> Unit,
+    onDismiss: () -> Unit,
+    onBackPressed: () -> Unit
+
 ) {
-    val searchState by viewModel.searchState.collectAsState()
-    val searchQuery by viewModel.searchQuery.collectAsState()
-    val selectedFilters by viewModel.selectedFilters.collectAsState()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+    LocationPermissionHandler(
+        onPermissionGranted = viewModel::initializeLocation
     ) {
-        LocationSearchBar(
-            query = searchQuery,
-            onQueryChange = viewModel::updateSearchQuery,
-            onSearch = viewModel::performSearch
-        )
+        val searchState by viewModel.searchState.collectAsState()
+        val searchQuery by viewModel.searchQuery.collectAsState()
+        val selectedFilters by viewModel.selectedFilters.collectAsState()
+        val location by viewModel.currentLocation.collectAsState()
+        val snackbarHostState = viewModel.snackbarHostState
 
-        LocationFilters(
-            currentFilters = selectedFilters,
-            onFilterChange = viewModel::updateFilters
-        )
-
-        when (val state = searchState) {
-            is LocationSearchViewModel.SearchState.Loading -> {
-                CircularProgressIndicator(
-                    modifier = Modifier.align(Alignment.CenterHorizontally)
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Select Location") },
+                    navigationIcon = {
+                        IconButton(onClick = onDismiss) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
+                    }
                 )
-            }
-            is LocationSearchViewModel.SearchState.Results -> {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+            },
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
+        ) { paddingValues ->
+            if (location == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues),
+                    contentAlignment = Alignment.Center
                 ) {
-                    items(state.locations) { location ->
-                        LocationDetails(
-                            location = location,
-                            onDirections = { /* Handle directions */ },
-                            onSave = { /* Handle save */ },
-                            onClick = { onLocationSelected(location) }
-                        )
-                    }
+                    CircularProgressIndicator()
                 }
+                return@Scaffold
             }
-            is LocationSearchViewModel.SearchState.Error -> {
-                Text(
-                    text = state.message,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.align(Alignment.CenterHorizontally)
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                LocationSearchBar(
+                    query = searchQuery,
+                    onQueryChange = viewModel::updateSearchQuery,
+                    onSearch = viewModel::performSearch
                 )
-            }
-            is LocationSearchViewModel.SearchState.AutoComplete -> {
-                LazyColumn {
-                    items(state.suggestions) { suggestion ->
-                        SuggestionItem(
-                            suggestion = suggestion,
-                            onClick = {
-                                viewModel.updateSearchQuery(suggestion)
-                                viewModel.performSearch()
-                            }
+
+                LocationFilters(
+                    currentFilters = selectedFilters,
+                    onFilterChange = viewModel::updateFilters
+                )
+
+                when (val state = searchState) {
+                    is LocationSearchViewModel.SearchState.Loading -> {
+                        CircularProgressIndicator(
+                            modifier = Modifier.align(Alignment.CenterHorizontally)
                         )
                     }
+                    is LocationSearchViewModel.SearchState.Results -> {
+                        if (state.locations.isEmpty()) {
+                            Text(
+                                text = "No locations found",
+                                modifier = Modifier.align(Alignment.CenterHorizontally)
+                            )
+                        } else {
+                            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(state.locations) { location ->
+                                    LocationDetailsCard(
+                                        location = location,
+                                        onDirections = {
+                                            try {
+                                                val uri = "google.navigation:q=${location.latitude},${location.longitude}"
+                                                val intent = AndroidIntent(AndroidIntent.ACTION_VIEW, AndroidUri.parse(uri)).apply {
+                                                    setPackage("com.google.android.apps.maps")
+                                                }
+                                                context.startActivity(intent)
+                                            } catch (e: Exception) {
+                                                scope.launch {
+                                                    snackbarHostState.showSnackbar(
+                                                        message = "Could not open Google Maps",
+                                                        duration = SnackbarDuration.Short
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        onSave = {
+                                            viewModel.saveLocation(location)
+                                        },
+                                        onClick = { onLocationSelected(location) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    else -> {
+                        // Handle other states
+                    }
                 }
-            }
-            LocationSearchViewModel.SearchState.Initial -> {
-                // Show initial state UI if needed
             }
         }
     }
 }
 
-@Composable
-private fun SuggestionItem(
-    suggestion: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        onClick = onClick
-    ) {
-        Text(
-            text = suggestion,
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth()
-        )
-    }
-}
-
-@Composable
-fun LocationFilters(
-    currentFilters: LocationSearchService.LocationFilters,
-    onFilterChange: (LocationSearchService.LocationFilters) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var outdoorOnly by remember { mutableStateOf(currentFilters.outdoorOnly) }
-    var offLeashOnly by remember { mutableStateOf(currentFilters.offLeashOnly) }
-    var verifiedOnly by remember { mutableStateOf(currentFilters.verifiedOnly) }
-
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        FilterChip(
-            selected = outdoorOnly,
-            onClick = {
-                outdoorOnly = !outdoorOnly
-                onFilterChange(currentFilters.copy(outdoorOnly = outdoorOnly))
-            },
-            label = { Text("Outdoor Only") }
-        )
-        FilterChip(
-            selected = offLeashOnly,
-            onClick = {
-                offLeashOnly = !offLeashOnly
-                onFilterChange(currentFilters.copy(offLeashOnly = offLeashOnly))
-            },
-            label = { Text("Off-Leash Area") }
-        )
-        FilterChip(
-            selected = verifiedOnly,
-            onClick = {
-                verifiedOnly = !verifiedOnly
-                onFilterChange(currentFilters.copy(verifiedOnly = verifiedOnly))
-            },
-            label = { Text("Verified Only") }
-        )
-    }
-}
-
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun LocationDetails(
+private fun LocationDetailsCard(
     location: DogFriendlyLocation,
     onDirections: () -> Unit,
     onSave: () -> Unit,
@@ -247,3 +248,73 @@ fun LocationDetails(
         }
     }
 }
+
+
+sealed class LocationSearchState {
+    object Initial : LocationSearchState()
+    object Loading : LocationSearchState()
+    data class Error(val message: String) : LocationSearchState()
+    data class Results(val locations: List<DogFriendlyLocation>) : LocationSearchState()
+}
+
+    @Composable
+    private fun SuggestionItem(
+        suggestion: String,
+        onClick: () -> Unit,
+        modifier: Modifier = Modifier
+    ) {
+        Surface(
+            modifier = modifier.fillMaxWidth(),
+            onClick = onClick
+        ) {
+            Text(
+                text = suggestion,
+                modifier = Modifier
+                    .padding(16.dp)
+                    .fillMaxWidth()
+            )
+        }
+    }
+
+    @Composable
+    fun LocationFilters(
+        currentFilters: LocationSearchService.LocationFilters,
+        onFilterChange: (LocationSearchService.LocationFilters) -> Unit,
+        modifier: Modifier = Modifier
+    ) {
+        var outdoorOnly by remember { mutableStateOf(currentFilters.outdoorOnly) }
+        var offLeashOnly by remember { mutableStateOf(currentFilters.offLeashOnly) }
+        var verifiedOnly by remember { mutableStateOf(currentFilters.verifiedOnly) }
+
+        Row(
+            modifier = modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                selected = outdoorOnly,
+                onClick = {
+                    outdoorOnly = !outdoorOnly
+                    onFilterChange(currentFilters.copy(outdoorOnly = outdoorOnly))
+                },
+                label = { Text("Outdoor Only") }
+            )
+            FilterChip(
+                selected = offLeashOnly,
+                onClick = {
+                    offLeashOnly = !offLeashOnly
+                    onFilterChange(currentFilters.copy(offLeashOnly = offLeashOnly))
+                },
+                label = { Text("Off-Leash Area") }
+            )
+            FilterChip(
+                selected = verifiedOnly,
+                onClick = {
+                    verifiedOnly = !verifiedOnly
+                    onFilterChange(currentFilters.copy(verifiedOnly = verifiedOnly))
+                },
+                label = { Text("Verified Only") }
+            )
+        }
+    }
+
+

@@ -5,10 +5,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import io.pawsomepals.app.utils.ImageHandler
+import io.pawsomepals.app.data.repository.PhotoRepository
 
 class PhotoState(
-    private val imageHandler: ImageHandler,
+    private val photoRepository: PhotoRepository,  // Change from ImageHandler
     private val onPhotoSelected: suspend (Uri) -> Unit
 ) {
     // Public read-only states
@@ -27,7 +27,7 @@ class PhotoState(
         try {
             _isProcessing.value = true
             _error.value = null
-            val processedUri = imageHandler.processImage(uri)
+            val processedUri = photoRepository.compressImage(uri, 1024)  // Use PhotoRepository directly
             onPhotoSelected(processedUri)
         } catch (e: Exception) {
             _error.value = "Failed to process photo: ${e.message}"
@@ -51,14 +51,13 @@ class PhotoState(
         _isProcessing.value = false
     }
 }
-
 @Composable
 fun rememberPhotoState(
-    imageHandler: ImageHandler,
+    photoRepository: PhotoRepository,  // Change from ImageHandler
     onPhotoSelected: suspend (Uri) -> Unit
 ): PhotoState {
-    return remember(imageHandler, onPhotoSelected) {
-        PhotoState(imageHandler, onPhotoSelected)
+    return remember(photoRepository, onPhotoSelected) {
+        PhotoState(photoRepository, onPhotoSelected)
     }
 }
 

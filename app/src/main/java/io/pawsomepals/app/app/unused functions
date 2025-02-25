@@ -1,0 +1,49 @@
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/MainActivity.kt:91:21 'sdkInitialize(Context): Unit' is deprecated.
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/components/swiping/SwipingScreen.kt:66:5 Parameter 'dogProfileViewModel' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/components/swiping/SwipingScreen.kt:281:38 'Undo: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Undo
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/components/swiping/SwipingScreen.kt:435:44 'Chat: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Chat
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/viewmodel/ProfileViewModel.kt:182:26 Parameter 'isProfile' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/viewmodel/ViewmodelFactory.kt:79:19 Unchecked cast: ProfileViewModel to T
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/AppNavigation.kt:140:5 Parameter 'locationPermissionViewModel' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/AppNavigation.kt:145:5 Parameter 'lifecycleScope' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/components/DogProfileTab.kt:177:5 Parameter 'onPhotoCaptured' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/components/DogProfileTab.kt:181:9 Variable 'cameraState' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/components/DogProfileTab.kt:216:5 Parameter 'onNavigateToAddDog' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/components/DogProfileTab.kt:752:9 Variable 'scope' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/AddEditProfileScreen.kt:44:44 'ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/AddEditProfileScreen.kt:95:37 Unnecessary safe call on a non-null receiver of type String
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/AddEditProfileScreen.kt:96:44 Unnecessary safe call on a non-null receiver of type String
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/AddEditProfileScreen.kt:97:45 Unnecessary safe call on a non-null receiver of type String
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/MainScreen.kt:51:5 Parameter 'profileViewModel' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/MainScreen.kt:52:5 Parameter 'dogProfileViewModel' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/MainScreen.kt:53:5 Parameter 'playdateViewModel' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/MainScreen.kt:54:5 Parameter 'chatViewModel' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/MainScreen.kt:55:5 Parameter 'healthAdvisorViewModel' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/MainScreen.kt:56:5 Parameter 'settingsViewModel' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/MainScreen.kt:57:5 Parameter 'photoManagementViewModel' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/MainScreen.kt:58:5 Parameter 'ratingViewModel' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/MainScreen.kt:59:5 Parameter 'notificationViewModel' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/MainScreen.kt:60:5 Parameter 'swipingViewModel' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/MainScreen.kt:64:5 Parameter 'onPlaydateClick' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/MainScreen.kt:65:5 Parameter 'onChatClick' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/PlayfulDogProfileScreen.kt:74:44 'ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/ProfileScreen.kt:95:9 Variable 'permissionLauncher' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/ProfileScreen.kt:196:5 Parameter 'cameraLauncher' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/ProfileScreen.kt:197:5 Parameter 'galleryLauncher' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/ProfileScreen.kt:218:9 Name shadowed: cameraLauncher
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/ProfileScreen.kt:226:9 Name shadowed: galleryLauncher
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/ProfileScreen.kt:356:9 Variable 'cameraState' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/ProfileScreen.kt:386:5 Parameter 'onPhotoUpdate' is never used
+w: file:///C:/Users/admin/AndroidStudioProjects/testpals/app/src/main/java/io/pawsomepals/app/ui/theme/ProfileScreen.kt:389:5 Parameter 'cameraLauncher' is never used
+
+> Task :app:compileDebugJavaWithJavac
+> Task :app:hiltAggregateDepsDebug UP-TO-DATE
+> Task :app:hiltJavaCompileDebug
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:mergeDebugJavaResource UP-TO-DATE
+> Task :app:transformDebugClassesWithAsm
+> Task :app:dexBuilderDebug
+> Task :app:mergeDebugGlobalSynthetics UP-TO-DATE
+> Task :app:mergeProjectDexDebug
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect UP-TO-DATE

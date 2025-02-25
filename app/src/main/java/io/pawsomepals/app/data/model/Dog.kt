@@ -1,12 +1,17 @@
-
 package io.pawsomepals.app.data.model
 
-import androidx.room.*
+import androidx.annotation.Keep
+import androidx.room.ColumnInfo
+import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.PrimaryKey
+import androidx.room.TypeConverter
+import androidx.room.TypeConverters
+import com.google.firebase.firestore.PropertyName
 import io.pawsomepals.app.data.converters.Converters
-import com.google.firebase.database.IgnoreExtraProperties
-import com.google.firebase.database.PropertyName
+import io.pawsomepals.app.data.converters.DogFriendlyLocationTypeConverter
 
-@IgnoreExtraProperties
 @Entity(
     tableName = "dogs",
     foreignKeys = [
@@ -28,7 +33,6 @@ import com.google.firebase.database.PropertyName
 data class Dog(
     @PrimaryKey
     var id: String = "",
-
     var ownerId: String = "",
     var name: String = "",
     var breed: String = "",
@@ -37,35 +41,49 @@ data class Dog(
     var size: String = "",
     var energyLevel: String = "",
     var friendliness: String = "",
-
     var profilePictureUrl: String? = null,
+    val created: Long? = null,
+    val lastActive: Long? = null,
 
-    @PropertyName("isSpayedNeutered")
-    var isSpayedNeutered: String? = null,
+
+
+    @field:PropertyName("is_spayed_neutered")
+    @get:PropertyName("isSpayedNeutered")
+    @set:PropertyName("isSpayedNeutered")
+    @ColumnInfo(name = "is_spayed_neutered")
+    var isSpayedNeutered: Boolean? = null,
+
 
     var friendlyWithDogs: String? = null,
     var friendlyWithChildren: String? = null,
     var friendlyWithStrangers: String? = null,
-
     var specialNeeds: String? = null,
     var favoriteToy: String? = null,
     var preferredActivities: String? = null,
     var walkFrequency: String? = null,
     var favoriteTreat: String? = null,
-
     var trainingCertifications: String? = null,
     var trainability: String? = null,
-
     var exerciseNeeds: String? = null,
     var groomingNeeds: String? = null,
-
     var weight: Double? = null,
     var latitude: Double? = null,
     var longitude: Double? = null,
 
+
+    @ColumnInfo(name = "profile_complete")
+    val profileComplete: Boolean = false,
+    val geoHash: String? = null,
+
     @field:JvmField
     @TypeConverters(Converters::class)
     val photoUrls: List<String?> = List(6) { null },
+
+
+
+
+    @TypeConverters(DogFriendlyLocationTypeConverter::class)
+    val frequentedAreas: List<DogFriendlyLocation>? = null,
 
     @TypeConverters(AchievementTypeConverter::class)
     val achievements: List<Achievement> = emptyList()
@@ -80,13 +98,31 @@ data class Dog(
         gender = "",
         size = "",
         energyLevel = "",
-        friendliness = ""
+        friendliness = "",
+        isSpayedNeutered = null
     )
 
     companion object {
         const val MAX_PHOTOS = 6
 
-        // Common values for standardization
+        // TypeConverter functions
+        @JvmStatic
+        @TypeConverter
+        fun fromStringToBoolean(value: String?): Boolean? {
+            return when (value?.toLowerCase()) {
+                "true" -> true
+                "false" -> false
+                else -> null
+            }
+        }
+
+        @JvmStatic
+        @TypeConverter
+        fun fromBooleanToString(value: Boolean?): String? {
+            return value?.toString()
+        }
+
+        // Constants
         object Size {
             const val SMALL = "SMALL"
             const val MEDIUM = "MEDIUM"
@@ -104,17 +140,13 @@ data class Dog(
             const val FEMALE = "FEMALE"
         }
     }
-
-    // Helper functions
-    fun isProfileComplete(): Boolean {
-        return name.isNotBlank() &&
-                breed.isNotBlank() &&
-                age > 0 &&
-                gender.isNotBlank() &&
-                size.isNotBlank() &&
-                energyLevel.isNotBlank() &&
-                !photoUrls.all { it == null }
+    @Keep
+    @JvmName("setSpayedNeuteredFirestore")
+    fun setSpayedNeutered(value: Boolean?) {
+        isSpayedNeutered = value
     }
+
+
 
     fun addPhotoUrl(url: String, index: Int): List<String?> {
         if (index !in 0 until MAX_PHOTOS) return photoUrls
@@ -124,8 +156,17 @@ data class Dog(
     }
 
     fun hasRequiredVaccinations(): Boolean {
-        // Implement vaccination check logic
         return true // Placeholder
+    }
+
+    fun checkProfileComplete(): Boolean {
+        return name.isNotBlank() &&
+                breed.isNotBlank() &&
+                age > 0 &&
+                gender.isNotBlank() &&
+                size.isNotBlank() &&
+                energyLevel.isNotBlank() &&
+                !photoUrls.all { it == null }
     }
 
     fun isInRange(latitude: Double, longitude: Double, radiusKm: Double): Boolean {

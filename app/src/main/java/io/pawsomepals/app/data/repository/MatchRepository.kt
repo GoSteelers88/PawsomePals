@@ -1,21 +1,26 @@
 package io.pawsomepals.app.data.repository
 
+import android.annotation.SuppressLint
 import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.ktx.toObjects
+import io.pawsomepals.app.data.model.DogFriendlyLocation
 import io.pawsomepals.app.data.model.Match
 import io.pawsomepals.app.data.model.MatchStatus
 import io.pawsomepals.app.data.model.MatchType
 import io.pawsomepals.app.data.model.Swipe
 import io.pawsomepals.app.service.MatchingService
+import io.pawsomepals.app.utils.GeoFireUtils
+import io.pawsomepals.app.utils.GeoLocation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.tasks.await
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+
 
 @Singleton
 class MatchRepository @Inject constructor(
@@ -50,25 +55,46 @@ class MatchRepository @Inject constructor(
         }
     }
 
+    @SuppressLint("RestrictedApi")
     private suspend fun processLike(swipe: Swipe): Result<Unit> {
         return try {
+            Log.d(TAG, """
+            Processing like:
+            - Swiper ID: ${swipe.swiperId}
+            - Swiped ID: ${swipe.swipedId}
+            - Super Like: ${swipe.superLike}
+            - Score: ${swipe.compatibilityScore}
+        """.trimIndent())
+
             // Record like in realtime database
-            realtimeDb.reference
+            val likeRef = realtimeDb.reference
                 .child(COLLECTION_LIKES)
                 .child(swipe.swiperId)
                 .child(swipe.swipedId)
-                .setValue(
-                    mapOf(
-                        "timestamp" to System.currentTimeMillis(),
-                        "superLike" to swipe.superLike,
-                        "compatibilityScore" to swipe.compatibilityScore
-                    )
-                ).await()
+
+            likeRef.setValue(
+                mapOf(
+                    "timestamp" to System.currentTimeMillis(),
+                    "superLike" to swipe.superLike,
+                    "compatibilityScore" to swipe.compatibilityScore
+                )
+            ).await()
+
+            Log.d(TAG, "Like recorded at path: ${likeRef.path}")
 
             // Check for mutual match
             val mutualLike = checkMutualLike(swipe.swiperId, swipe.swipedId)
+            Log.d(TAG, """
+            Mutual like check:
+            - Result: ${mutualLike.getOrNull()}
+            - Success: ${mutualLike.isSuccess}
+            - Error: ${mutualLike.exceptionOrNull()?.message}
+        """.trimIndent())
+
             if (mutualLike.getOrNull() == true) {
-                createMatchFromSwipe(swipe)
+                Log.d(TAG, "Creating match from swipe")
+                val matchResult = createMatchFromSwipe(swipe)
+                Log.d(TAG, "Match creation result: $matchResult")
             }
 
             Result.success(Unit)
@@ -77,7 +103,6 @@ class MatchRepository @Inject constructor(
             Result.failure(e)
         }
     }
-
     private suspend fun processDislike(swipe: Swipe): Result<Unit> {
         return try {
             realtimeDb.reference
@@ -98,6 +123,30 @@ class MatchRepository @Inject constructor(
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Error processing dislike", e)
+            Result.failure(e)
+        }
+    }
+    suspend fun hasUserSwipedProfile(userId: String, profileId: String): Result<Boolean> {
+        return try {
+            // Check in likes collection
+            val likeRef = realtimeDb.reference
+                .child(COLLECTION_LIKES)
+                .child(userId)
+                .child(profileId)
+                .get()
+                .await()
+
+            // Check in dislikes collection
+            val dislikeRef = realtimeDb.reference
+                .child(COLLECTION_DISLIKES)
+                .child(userId)
+                .child(profileId)
+                .get()
+                .await()
+
+            Result.success(likeRef.exists() || dislikeRef.exists())
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking swipe status", e)
             Result.failure(e)
         }
     }
@@ -142,10 +191,57 @@ class MatchRepository @Inject constructor(
         }
     }
 
+    suspend fun getSuggestedPlaydateLocations(
+        match: Match,
+        maxDistance: Double = 10.0
+    ): Result<List<DogFriendlyLocation>> {
+        return try {
+            val centerLat = ((match.dog1Latitude ?: 0.0) + (match.dog2Latitude ?: 0.0)) / 2
+            val centerLng = ((match.dog1Longitude ?: 0.0) + (match.dog2Longitude ?: 0.0)) / 2
+
+            val locationsRef = firestore.collection("dog_friendly_locations")
+            val geoHash = GeoFireUtils.getGeoHashForLocation(
+                GeoLocation(centerLat, centerLng)
+            )
+
+            val bounds = GeoFireUtils.getGeoHashQueryBounds(
+                GeoLocation(centerLat, centerLng),
+                maxDistance * 1000
+            )
+
+            val locations = bounds.flatMap { bound ->
+                locationsRef
+                    .orderBy("geoHash")
+                    .startAt(bound.startHash)
+                    .endAt(bound.endHash)
+                    .get()
+                    .await()
+                    .toObjects<DogFriendlyLocation>()
+            }
+
+            Result.success(locations)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
     suspend fun createMatch(match: Match): Result<Unit> {
         return try {
+            // Validate match before creation
+            if (match.user1Id == match.user2Id || match.dog1Id == match.dog2Id) {
+                return Result.failure(IllegalArgumentException("Cannot create match between same user or dog"))
+            }
+
+            // Check if match already exists (in either direction)
+            val existingMatch = getMatchByDogs(match.dog1Id, match.dog2Id).getOrNull()
+            if (existingMatch != null) {
+                return Result.failure(IllegalStateException("Match already exists"))
+            }
+
             val matchData = match.toMap() + mapOf(
-                "expiryDate" to (System.currentTimeMillis() + match.matchType.getExpiryDuration())
+                "expiryDate" to (System.currentTimeMillis() + match.matchType.getExpiryDuration()),
+                "geoHash" to GeoFireUtils.getGeoHashForLocation(
+                    GeoLocation(match.dog1Latitude ?: 0.0, match.dog1Longitude ?: 0.0)
+                )
             )
 
             firestore.collection(COLLECTION_MATCHES)
@@ -153,65 +249,108 @@ class MatchRepository @Inject constructor(
                 .set(matchData)
                 .await()
 
-            // Update match counts
-            updateUserMatchCounts(match.user1Id, match.user2Id)
-
             Result.success(Unit)
         } catch (e: Exception) {
-            Log.e(TAG, "Error creating match", e)
             Result.failure(e)
         }
     }
 
+
     // Match Queries
-    fun getActiveMatches(limit: Int = DEFAULT_BATCH_SIZE): Flow<Result<List<Match>>> = flow {
+    suspend fun getActiveMatches(userId: String): Flow<Result<List<Match>>> = flow {
         try {
-            val matchesQuery = firestore.collection(COLLECTION_MATCHES)
+            // We need to check both user1Id and user2Id
+            val matches1 = firestore.collection("matches")
+                .whereEqualTo("status", "ACTIVE")
                 .whereEqualTo("user1Id", userId)
-                .whereEqualTo("status", MatchStatus.ACTIVE.name)
-                .whereGreaterThan("expiryDate", System.currentTimeMillis())
-                .orderBy("expiryDate", Query.Direction.ASCENDING)
-                .limit(limit.toLong())
                 .get()
                 .await()
 
-            val matches = matchesQuery.toObjects(Match::class.java)
-            emit(Result.success(matches))
+            val matches2 = firestore.collection("matches")
+                .whereEqualTo("status", "ACTIVE")
+                .whereEqualTo("user2Id", userId)
+                .get()
+                .await()
+
+            val allMatches = (matches1.toObjects<Match>() + matches2.toObjects<Match>())
+                .distinctBy { it.id } // Remove any duplicates
+                .filter { match ->
+                    // Additional validation
+                    match.user1Id != match.user2Id && // Different users
+                            match.dog1Id != match.dog2Id      // Different dogs
+                }
+
+            emit(Result.success(allMatches))
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting active matches", e)
             emit(Result.failure(e))
         }
     }
+
+    suspend fun getNearbyMatches(
+        latitude: Double,
+        longitude: Double,
+        radius: Double
+    ): Flow<List<Match>> = flow {
+        try {
+            val center = GeoLocation(latitude, longitude)
+            val geoHash = GeoFireUtils.getGeoHashForLocation(center)
+            val bounds = GeoFireUtils.getGeoHashQueryBounds(center, radius * 1000)
+
+            val matches = bounds.flatMap { bound ->
+                firestore.collection(COLLECTION_MATCHES)
+                    .orderBy("geoHash")
+                    .startAt(bound.startHash)
+                    .endAt(bound.endHash)
+                    .get()
+                    .await()
+                    .toObjects<Match>()
+            }
+
+            emit(matches)
+        } catch (e: Exception) {
+            emit(emptyList())
+        }
+    }
+
 
     fun getPendingMatches(): Flow<Result<List<Match>>> = flow {
         try {
-            val matchesQuery = firestore.collection(COLLECTION_MATCHES)
-                .whereEqualTo("user2Id", userId)
+            val userId = auth.currentUser?.uid ?: throw IllegalStateException("User not logged in")
+
+            // Check both sides of pending matches
+            val pending1 = firestore.collection("matches")
                 .whereEqualTo("status", MatchStatus.PENDING.name)
-                .whereGreaterThan("expiryDate", System.currentTimeMillis())
-                .orderBy("expiryDate", Query.Direction.ASCENDING)
+                .whereEqualTo("user1Id", userId)
                 .get()
                 .await()
 
-            val matches = matchesQuery.toObjects(Match::class.java)
-            emit(Result.success(matches))
+            val pending2 = firestore.collection("matches")
+                .whereEqualTo("status", MatchStatus.PENDING.name)
+                .whereEqualTo("user2Id", userId)
+                .get()
+                .await()
+
+            val allPending = (pending1.toObjects<Match>() + pending2.toObjects<Match>())
+                .distinctBy { it.id }
+                .filter { match ->
+                    match.user1Id != match.user2Id &&
+                            match.dog1Id != match.dog2Id
+                }
+
+            emit(Result.success(allPending))
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting pending matches", e)
             emit(Result.failure(e))
         }
     }
-
     // Match Status Updates
     suspend fun updateMatchStatus(matchId: String, newStatus: MatchStatus): Result<Unit> {
         return try {
             firestore.collection(COLLECTION_MATCHES)
                 .document(matchId)
-                .update(
-                    mapOf(
-                        "status" to newStatus.name,
-                        "lastUpdated" to System.currentTimeMillis()
-                    )
-                )
+                .update(mapOf(
+                    "status" to newStatus.name,
+                    "lastUpdated" to System.currentTimeMillis()
+                ))
                 .await()
             Result.success(Unit)
         } catch (e: Exception) {
@@ -223,6 +362,7 @@ class MatchRepository @Inject constructor(
     // Helper Functions
     private suspend fun checkMutualLike(dog1Id: String, dog2Id: String): Result<Boolean> {
         return try {
+            // Check if dog2 liked dog1
             val likeRef = realtimeDb.reference
                 .child(COLLECTION_LIKES)
                 .child(dog2Id)
@@ -230,7 +370,16 @@ class MatchRepository @Inject constructor(
                 .get()
                 .await()
 
-            Result.success(likeRef.exists())
+            // Check if dog1 liked dog2
+            val reverseLikeRef = realtimeDb.reference
+                .child(COLLECTION_LIKES)
+                .child(dog1Id)
+                .child(dog2Id)
+                .get()
+                .await()
+
+            // Both must exist for a mutual match
+            Result.success(likeRef.exists() && reverseLikeRef.exists())  // Fixed to AND
         } catch (e: Exception) {
             Log.e(TAG, "Error checking mutual like", e)
             Result.failure(e)

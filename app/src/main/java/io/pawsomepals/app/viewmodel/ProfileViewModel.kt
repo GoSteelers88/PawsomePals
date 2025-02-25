@@ -1,22 +1,28 @@
 package io.pawsomepals.app.viewmodel
 
 import android.app.Application
-import android.content.Context
-import androidx.lifecycle.viewModelScope  // Add this import
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
-import io.pawsomepals.app.data.DataManager
-import io.pawsomepals.app.data.model.Dog
-import io.pawsomepals.app.data.model.User
-import io.pawsomepals.app.data.repository.UserRepository
-import io.pawsomepals.app.service.location.LocationService
+import androidx.lifecycle.viewModelScope
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.ktx.auth
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import com.google.firebase.storage.FirebaseStorage
+import com.google.firebase.storage.UploadTask
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.pawsomepals.app.auth.AuthStateManager
+import io.pawsomepals.app.data.DataManager
+import io.pawsomepals.app.data.model.Dog
+import io.pawsomepals.app.data.model.User
+import io.pawsomepals.app.data.repository.DogProfileRepository
+import io.pawsomepals.app.data.repository.PhotoRepository
+import io.pawsomepals.app.data.repository.UserRepository
+import io.pawsomepals.app.service.location.LocationService
+import io.pawsomepals.app.utils.CameraManager
+import io.pawsomepals.app.utils.NetworkUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,9 +32,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
-import io.pawsomepals.app.utils.ImageHandler
-import io.pawsomepals.app.utils.NetworkUtils
-import kotlinx.coroutines.delay
 
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
@@ -38,12 +41,31 @@ class ProfileViewModel @Inject constructor(
     private val storage: FirebaseStorage,
     private val dataManager: DataManager,
     private val savedStateHandle: SavedStateHandle,
-    private val imageHandler: ImageHandler, // Replace cameraUtils with imageHandler
-    private val networkUtils: NetworkUtils  // Add this
+    private val networkUtils: NetworkUtils,
+    private val cameraManager: CameraManager, // Add CameraManager
+    private val photoRepository: PhotoRepository ,
+    private val dogProfileRepository: DogProfileRepository,
+    private val firebaseAuth: FirebaseAuth,
+    private val authStateManager: AuthStateManager // Add this
+// Add this line
+
+
+
 
 
 
 ) : ViewModel() {
+    // Add state type definition
+    sealed class DogProfileState {
+        object Initial : DogProfileState()
+        object Loading : DogProfileState()
+        data class Success(val message: String) : DogProfileState()
+        data class Error(val message: String) : DogProfileState()
+    }
+
+    // Add state flow
+    private val _dogProfileState = MutableStateFlow<DogProfileState>(DogProfileState.Initial)
+    val dogProfileState: StateFlow<DogProfileState> = _dogProfileState.asStateFlow()
 
     // Companion object with constants
     companion object {
@@ -83,6 +105,18 @@ class ProfileViewModel @Inject constructor(
 
     private val _currentDog = MutableStateFlow<Dog?>(null)
     val currentDog: StateFlow<Dog?> = _currentDog.asStateFlow()
+    private val _username = MutableStateFlow("")
+    val username: StateFlow<String> = _username.asStateFlow()
+
+    private val _cameraState = MutableStateFlow<CameraUIState>(CameraUIState.Initial)
+    val cameraState: StateFlow<CameraUIState> = _cameraState.asStateFlow()
+
+    sealed class CameraUIState {
+        object Initial : CameraUIState()
+        object Preview : CameraUIState()
+        data class Error(val message: String) : CameraUIState()
+        data class PhotoTaken(val uri: Uri) : CameraUIState()
+    }
 
     // Add this to your StateFlow declarations section
     private val _questionnaireResponses =
@@ -90,14 +124,51 @@ class ProfileViewModel @Inject constructor(
     val questionnaireResponses: StateFlow<Map<String, Map<String, String>>> =
         _questionnaireResponses.asStateFlow()
 
+    init {
+        viewModelScope.launch {
+            try {
+                val currentUser = firebaseAuth.currentUser
+                if (currentUser != null) {
+                    setupUserProfileListener(currentUser.uid)
+                    loadProfileById(currentUser.uid)
+                }
 
+                // Single auth state listener
+                firebaseAuth.addAuthStateListener { auth ->
+                    viewModelScope.launch {
+                        val user = auth.currentUser
+                        if (user != null) {
+                            setupUserProfileListener(user.uid)
+                            loadProfileById(user.uid)
+                        } else {
+                            _userProfile.value = null
+                            _dogProfile.value = null
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                _error.value = "Failed to initialize: ${e.message}"
+            }
+        }
+    }
     fun loadProfileById(userId: String) {
         viewModelScope.launch {
             try {
                 _isLoading.value = true
+
+                // First try to get immediate profile data
+                val immediateProfile = withContext(Dispatchers.IO) {
+                    userRepository.getUserById(userId)
+                }
+                _userProfile.value = immediateProfile
+
+                // Then set up observers for real-time updates
                 dataManager.observeUserProfile(userId).collect { user ->
                     _userProfile.value = user
+                    _isLoading.value = false  // Move this inside collect
                 }
+
+                // Load dogs after user profile
                 dataManager.observeUserDogs(userId).collect { dogs ->
                     _userDogs.value = dogs
                     // Fetch questionnaire responses for each dog
@@ -113,42 +184,113 @@ class ProfileViewModel @Inject constructor(
             } catch (e: Exception) {
                 Log.e("ProfileViewModel", "Error loading profiles: ${e.message}")
                 _error.value = "Failed to load profiles: ${e.message}"
-            } finally {
-                _isLoading.value = false
+                _isLoading.value = false  // Make sure to set loading to false on error
             }
         }
     }
 
 
     fun getOutputFileUri(isProfile: Boolean = false): Uri {
-        return try {
-            imageHandler.createImageFile(isProfile).second
-        } catch (e: Exception) {
-            Log.e("ProfileViewModel", "Failed to create image file", e)
-            throw e
-        }
+        return photoRepository.getOutputFileUri(application)  // Use application instead of context
     }
-
-
 
     fun setCurrentDog(dogId: String) {
         viewModelScope.launch {
             try {
-                _isLoading.value = true
-                val dog = _userDogs.value.find { it.id == dogId }
-                _currentDog.value = dog
+                _dogProfileState.value = DogProfileState.Loading
+                // First check the local list
+                val localDog = _userDogs.value.find { it.id == dogId }
 
-                // Load questionnaire responses for the current dog
-                dog?.let {
-                    loadQuestionnaireResponses(it.ownerId, it.id)
+                if (localDog != null) {
+                    _currentDog.value = localDog
+                    _dogProfile.value = localDog
+                    _dogProfileState.value = DogProfileState.Success("Current dog set successfully")
+                    Log.d("DogProfileViewModel", "Set current dog from local list: ${localDog.id}")
+                    return@launch
                 }
 
-                Log.d("ProfileViewModel", "Current dog set to: ${dog?.name}")
+                // If not in local list, fetch from repository
+                dogProfileRepository.getDogProfile(dogId).collect { result ->
+                    result.fold(
+                        onSuccess = { dog ->
+                            _currentDog.value = dog
+                            _dogProfile.value = dog
+                            _dogProfileState.value = DogProfileState.Success("Current dog set successfully")
+                            Log.d("DogProfileViewModel", "Successfully set current dog: ${dog?.id}")
+                        },
+                        onFailure = { error ->
+                            Log.e("DogProfileViewModel", "Error setting current dog", error)
+                            _dogProfileState.value = DogProfileState.Error("Failed to set current dog: ${error.message}")
+                        }
+                    )
+                }
             } catch (e: Exception) {
-                Log.e("ProfileViewModel", "Error setting current dog: ${e.message}")
-                _error.value = "Failed to set current dog: ${e.message}"
+                Log.e("DogProfileViewModel", "Error setting current dog", e)
+                _dogProfileState.value = DogProfileState.Error("Failed to set current dog: ${e.message}")
+            }
+        }
+    }
+    fun checkUsernameAvailability(username: String) {
+        viewModelScope.launch {
+            try {
+                _isLoading.value = true
+                val isAvailable = userRepository.isUsernameAvailable(username)
+                if (!isAvailable) {
+                    _error.value = "Username is already taken"
+                }
+            } catch (e: Exception) {
+                _error.value = "Failed to check username availability: ${e.message}"
             } finally {
                 _isLoading.value = false
+            }
+        }
+    }
+
+    fun loadCurrentUserProfile() {
+        viewModelScope.launch {
+            try {
+                _isLoading.value = true
+                val userId = auth.currentUser?.uid ?: run {
+                    _error.value = "No authenticated user found"
+                    return@launch
+                }
+
+                loadProfileById(userId)
+
+                // Set up continuous profile updates
+                setupUserProfileListener(userId)
+
+                // Load dogs after profile
+                dataManager.observeUserDogs(userId).collect { dogs ->
+                    _userDogs.value = dogs
+                    dogs.forEach { dog ->
+                        loadQuestionnaireResponses(userId, dog.id)
+                    }
+                }
+            } catch (e: Exception) {
+                _error.value = "Failed to load profile: ${e.message}"
+                Log.e("ProfileViewModel", "Error loading profile", e)
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    fun capturePhoto() {
+        viewModelScope.launch {
+            try {
+                if (_userProfile.value == null) {
+                    _cameraState.value = CameraUIState.Error("Please wait for profile to load")
+                    return@launch
+                }
+
+                val photoUri = cameraManager.capturePhoto()
+                photoUri?.let {
+                    _cameraState.value = CameraUIState.PhotoTaken(it)
+                    updateUserProfilePicture(it)
+                }
+            } catch (e: Exception) {
+                _cameraState.value = CameraUIState.Error(e.message ?: "Failed to capture photo")
             }
         }
     }
@@ -158,69 +300,86 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 _isLoading.value = true
+                val authUser = auth.currentUser ?: throw IllegalStateException("User not authenticated")
 
-                // Process image using imageHandler
-                val processedUri = imageHandler.processImage(uri, isProfile = true)
-
-                val user = auth.currentUser ?: throw IllegalStateException("User not authenticated")
-                val storageRef = storage.reference
-                    .child("profile_pictures")
-                    .child(user.uid)
-                    .child("profile_${System.currentTimeMillis()}.jpg")
-
-                val uploadTask = storageRef.putFile(processedUri)
-
-                uploadTask.addOnProgressListener { taskSnapshot ->
-                    val progress = (100.0 * taskSnapshot.bytesTransferred / taskSnapshot.totalByteCount)
-                    _uploadProgress.value = progress.toFloat() / 100f
-                }.await()
-
-                val downloadUrl = storageRef.downloadUrl.await().toString()
-
-                _userProfile.value?.let { currentUser ->
-                    val updatedUser = currentUser.copy(profilePictureUrl = downloadUrl)
-                    dataManager.updateUserProfile(updatedUser)
-                    _userProfile.value = updatedUser // Make sure this is updating
+                if (_userProfile.value == null) {
+                    val userProfile = withContext(Dispatchers.IO) {
+                        userRepository.getUserById(authUser.uid)
+                    } ?: throw IllegalStateException("No user profile loaded")
+                    _userProfile.value = userProfile
                 }
 
+                // Process the image using PhotoRepository
+                val processedUri = withContext(Dispatchers.IO) {
+                    photoRepository.compressImage(uri, 1024) // Use appropriate max dimension
+                }
+
+                val timestamp = System.currentTimeMillis()
+                val storageRef = storage.reference
+                    .child(PROFILE_PICTURES_DIR)
+                    .child(authUser.uid)
+                    .child("profile_${timestamp}.jpg")
+
+                // Upload with progress tracking
+                var uploadTask = storageRef.putFile(processedUri)
+                uploadTask = uploadTask.addOnProgressListener { taskSnapshot ->
+                    val progress = (100.0 * taskSnapshot.bytesTransferred / taskSnapshot.totalByteCount)
+                    _uploadProgress.value = progress.toFloat() / 100f
+                } as UploadTask
+
+                uploadTask.await()
+                val downloadUrl = storageRef.downloadUrl.await().toString()
+
+                val currentUser = _userProfile.value ?: throw IllegalStateException("No user profile loaded")
+                val updatedUser = currentUser.copy(profilePictureUrl = downloadUrl)
+
+                withContext(Dispatchers.IO) {
+                    dataManager.updateUserProfile(updatedUser)
+                }
+
+                _userProfile.value = updatedUser
+                Log.d("ProfileViewModel", "Profile picture updated successfully: $downloadUrl")
+
             } catch (e: Exception) {
-                _error.value = "Failed to update profile picture: ${e.message}"
+                Log.e("ProfileViewModel", "Error updating profile picture", e)
+                _error.value = when {
+                    e is IllegalStateException -> e.message
+                    e.message?.contains("network", ignoreCase = true) == true ->
+                        "Network error. Please check your connection."
+                    e.message?.contains("permission", ignoreCase = true) == true ->
+                        "Permission denied. Please try again."
+                    else -> "Failed to update profile picture: ${e.message}"
+                }
             } finally {
                 _isLoading.value = false
                 _uploadProgress.value = 0f
-                imageHandler.cleanupTempFiles()
+                photoRepository.cleanupTempFiles() // Use photoRepository instead of imageHandler
             }
         }
     }
+
     fun cleanupTempFiles() {
         viewModelScope.launch {
-            imageHandler.cleanupTempFiles()
+            photoRepository.cleanupTempFiles()
         }
     }
-
 
 
     private fun setupUserProfileListener(userId: String) {
-        firestore.collection("users").document(userId)
-            .addSnapshotListener { snapshot, e ->
-                if (e != null) {
-                    Log.e("ProfileViewModel", "Listen failed for user profile", e)
-                    return@addSnapshotListener
-                }
-
-                if (snapshot != null && snapshot.exists()) {
-                    val user = snapshot.toObject(User::class.java)
-                    Log.d(
-                        "ProfileViewModel",
-                        "User profile snapshot received: ${user?.username}"
-                    )
+        viewModelScope.launch {
+            try {
+                dataManager.observeUserProfile(userId).collect { user ->
                     _userProfile.value = user
-                } else {
-                    Log.w("ProfileViewModel", "User profile snapshot is null or doesn't exist")
+                    if (user != null) {
+                        loadProfileById(user.id)
+                    }
                 }
+            } catch (e: Exception) {
+                Log.e("ProfileViewModel", "Error setting up profile listener", e)
+                _error.value = "Failed to load profile: ${e.message}"
             }
+        }
     }
-
 
     fun loadQuestionnaireResponses(userId: String, dogId: String) {
         viewModelScope.launch {
@@ -309,6 +468,18 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 _isLoading.value = true
+
+                // Check if username is changing
+                val currentUser = _userProfile.value
+                if (currentUser?.username != user.username) {
+                    // Check availability only if username is changing
+                    if (!userRepository.isUsernameAvailable(user.username)) {
+                        _error.value = "Username is already taken"
+                        _isLoading.value = false
+                        return@launch
+                    }
+                }
+
                 withContext(Dispatchers.IO) {
                     dataManager.updateUserProfile(user)
                 }
@@ -322,7 +493,55 @@ class ProfileViewModel @Inject constructor(
             }
         }
     }
+    fun isValidUsername(username: String): Boolean {
+        // Username requirements:
+        // 1. 3-30 characters
+        // 2. Alphanumeric and underscores only
+        // 3. No spaces
+        val usernamePattern = "^[a-zA-Z0-9_]{3,30}$"
+        return username.matches(usernamePattern.toRegex())
+    }
 
+    fun updateUsername(newUsername: String) {
+        viewModelScope.launch {
+            try {
+                _isLoading.value = true
+
+                if (!isValidUsername(newUsername)) {
+                    _error.value = "Invalid username format. Use 3-30 characters, letters, numbers, and underscores only."
+                    return@launch
+                }
+
+                val currentUser = _userProfile.value ?: throw IllegalStateException("No user profile loaded")
+
+                if (currentUser.username == newUsername) {
+                    return@launch // No change needed
+                }
+
+                if (!userRepository.isUsernameAvailable(newUsername)) {
+                    _error.value = "Username is already taken"
+                    return@launch
+                }
+
+                // Update the username through AuthStateManager first
+                authStateManager.updateUsername(newUsername)
+
+                // Update local user profile
+                val updatedUser = currentUser.copy(username = newUsername)
+                withContext(Dispatchers.IO) {
+                    dataManager.updateUserProfile(updatedUser)
+                }
+                _userProfile.value = updatedUser
+                _username.value = newUsername
+
+            } catch (e: Exception) {
+                Log.e("ProfileViewModel", "Error updating username", e)
+                _error.value = "Failed to update username: ${e.message}"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
 
     fun loadDogProfile(dogId: String) {
         viewModelScope.launch {
@@ -394,7 +613,7 @@ class ProfileViewModel @Inject constructor(
                     size = dogData["size"] ?: currentDog.size,
                     energyLevel = dogData["energyLevel"] ?: currentDog.energyLevel,
                     friendliness = dogData["friendliness"] ?: currentDog.friendliness,
-                    isSpayedNeutered = dogData["isSpayedNeutered"],  // Changed this line
+                    isSpayedNeutered = dogData["isSpayedNeutered"]?.toBooleanStrictOrNull() ?: currentDog.isSpayedNeutered, // Fix here
                     friendlyWithDogs = dogData["friendlyWithDogs"]
                         ?: currentDog.friendlyWithDogs,
                     friendlyWithChildren = dogData["friendlyWithChildren"]
@@ -424,6 +643,12 @@ class ProfileViewModel @Inject constructor(
                 Log.e("ProfileViewModel", "Error updating dog profile: ${e.message}")
                 _error.value = "Failed to update dog profile: ${e.message}"
             }
+        }
+    }
+
+    fun setError(message: String?) {
+        viewModelScope.launch {
+            _error.value = message
         }
     }
 
@@ -458,103 +683,4 @@ class ProfileViewModel @Inject constructor(
                 }
             }
     }
-
-    suspend fun updateDogProfilePicture(index: Int, uri: Uri) {
-        try {
-            Log.d("ProfileViewModel", "Starting dog profile picture update. Index: $index, URI: $uri")
-            _isLoading.value = true
-
-            // Check network connectivity first
-            if (!networkUtils.isNetworkAvailable()) {
-                _error.value = "No internet connection. Please check your connection and try again."
-                return
-            }
-
-            val processedUri = imageHandler.processImage(uri, isProfile = false)
-            Log.d("ProfileViewModel", "Image processed. New URI: $processedUri")
-
-            val user = auth.currentUser ?: throw IllegalStateException("User not authenticated")
-            val dogId = _currentDog.value?.id ?: throw IllegalStateException("No dog selected")
-
-            // Retry logic for Firebase operations
-            var attempts = 0
-            val maxAttempts = 3
-            var lastException: Exception? = null
-
-            while (attempts < maxAttempts) {
-                try {
-                    val storageRef = storage.reference
-                        .child("dog_photos")
-                        .child(user.uid)
-                        .child(dogId)
-                        .child("profile_${System.currentTimeMillis()}.jpg")
-
-                    val uploadTask = storageRef.putFile(processedUri)
-
-                    uploadTask.addOnProgressListener { taskSnapshot ->
-                        val progress = (100.0 * taskSnapshot.bytesTransferred / taskSnapshot.totalByteCount)
-                        _uploadProgress.value = progress.toFloat() / 100f
-                    }.await()
-
-                    val downloadUrl = storageRef.downloadUrl.await().toString()
-                    Log.d("ProfileViewModel", "Download URL received: $downloadUrl")
-
-                    _currentDog.value?.let { currentDog ->
-                        val updatedPhotoUrls = currentDog.photoUrls.toMutableList()
-                        if (updatedPhotoUrls.isEmpty()) {
-                            updatedPhotoUrls.add(downloadUrl)
-                        } else if (index == 0) {
-                            updatedPhotoUrls[0] = downloadUrl
-                        } else if (index < updatedPhotoUrls.size) {
-                            updatedPhotoUrls[index] = downloadUrl
-                        } else {
-                            updatedPhotoUrls.add(downloadUrl)
-                        }
-
-                        val updatedDog = currentDog.copy(
-                            photoUrls = updatedPhotoUrls,
-                            profilePictureUrl = downloadUrl // Set the first photo as profile picture
-                        )
-
-                        dataManager.createOrUpdateDogProfile(updatedDog)
-                        _currentDog.value = updatedDog
-
-                        // Update userDogs list
-                        val updatedDogs = _userDogs.value.map {
-                            if (it.id == updatedDog.id) updatedDog else it
-                        }
-                        _userDogs.value = updatedDogs
-                    }
-
-                    // If we get here, the operation was successful
-                    break
-                } catch (e: Exception) {
-                    lastException = e
-                    attempts++
-                    if (attempts == maxAttempts) {
-                        throw e
-                    }
-                    delay(1000L * attempts) // Exponential backoff
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("ProfileViewModel", "Error updating dog profile picture", e)
-            _error.value = "Failed to update profile picture: ${e.message}"
-        } finally {
-            _isLoading.value = false
-            _uploadProgress.value = 0f
-            imageHandler.cleanupTempFiles()
-        }
     }
-    override fun onCleared() {
-        super.onCleared()
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                application.getDir(TEMP_PHOTOS_DIR, Context.MODE_PRIVATE)?.deleteRecursively()
-            } catch (e: Exception) {
-                Log.e("ProfileViewModel", "Error cleaning up in onCleared: ${e.message}")
-            }
-        }
-    }
-}
-

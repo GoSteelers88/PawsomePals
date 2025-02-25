@@ -1,11 +1,12 @@
 package io.pawsomepals.app.service.location
 
 import android.content.Context
-import com.google.android.libraries.places.api.Places
+import android.location.Location
 import com.google.android.libraries.places.api.model.Place
 import com.google.android.libraries.places.api.net.FindCurrentPlaceRequest
 import com.google.android.libraries.places.api.net.PlacesClient
 import com.google.firebase.firestore.FirebaseFirestore
+import dagger.hilt.android.qualifiers.ApplicationContext
 import io.pawsomepals.app.data.model.DogFriendlyLocation
 import kotlinx.coroutines.suspendCancellableCoroutine
 import javax.inject.Inject
@@ -13,15 +14,12 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 class LocationSuggestionService @Inject constructor(
-    private val context: Context,
+    @ApplicationContext private val context: Context,
+    private val placesClient: PlacesClient,  // Injected from our PlacesModule
     private val firestore: FirebaseFirestore
 ) {
-    private val placesClient: PlacesClient
 
-    init {
-        Places.initialize(context, "YOUR_API_KEY_HERE")
-        placesClient = Places.createClient(context)
-    }
+
 
     suspend fun getDogFriendlyLocations(location1: com.google.android.gms.maps.model.LatLng, location2: com.google.android.gms.maps.model.LatLng): List<Place> = suspendCancellableCoroutine { continuation ->
         val placeFields = listOf(Place.Field.NAME, Place.Field.ADDRESS, Place.Field.LAT_LNG)
@@ -41,6 +39,27 @@ class LocationSuggestionService @Inject constructor(
         }
     }
 
+    suspend fun getMidpointLocations(
+        location1: com.google.android.gms.maps.model.LatLng,
+        location2: com.google.android.gms.maps.model.LatLng
+    ): List<DogFriendlyLocation> {
+        // Create midpoint using Google Maps LatLng
+        val midpoint = com.google.android.gms.maps.model.LatLng(
+            (location1.latitude + location2.latitude) / 2,
+            (location1.longitude + location2.longitude) / 2
+        )
+
+        return getDogFriendlyLocations(midpoint, midpoint).map { place ->
+            DogFriendlyLocation.fromPlace(place).copy(
+                isPlaydateEnabled = true,
+                distanceFromMidpoint = calculateDistance(
+                    midpoint,
+                    place.latLng ?: com.google.android.gms.maps.model.LatLng(0.0, 0.0)
+                )
+            )
+        }
+    }
+
     suspend fun getSavedLocations(userId: String): List<DogFriendlyLocation> =
         suspendCancellableCoroutine { continuation ->
             firestore.collection("users")
@@ -57,6 +76,16 @@ class LocationSuggestionService @Inject constructor(
                     continuation.resumeWithException(e)
                 }
         }
+    fun calculateDistance(point1: com.google.android.gms.maps.model.LatLng,
+                          point2: com.google.android.gms.maps.model.LatLng): Float {
+        val results = FloatArray(1)
+        Location.distanceBetween(
+            point1.latitude, point1.longitude,
+            point2.latitude, point2.longitude,
+            results
+        )
+        return results[0]
+    }
 
     suspend fun saveLocation(userId: String, location: DogFriendlyLocation) =
         suspendCancellableCoroutine { continuation ->

@@ -1,13 +1,20 @@
 package io.pawsomepals.app.data
 
+import android.content.ContentValues.TAG
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
-import android.os.Environment
 import android.util.Log
-import androidx.core.content.FileProvider
+import com.google.android.gms.auth.api.identity.Identity
+import com.google.android.gms.auth.api.identity.SignInClient
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreSettings
+import com.google.firebase.firestore.Query
+import com.google.firebase.storage.FirebaseStorage
+import dagger.hilt.android.qualifiers.ApplicationContext
+import io.pawsomepals.app.auth.AuthStateManager
 import io.pawsomepals.app.auth.GoogleAuthManager
 import io.pawsomepals.app.data.dao.DogDao
 import io.pawsomepals.app.data.managers.CalendarManager
@@ -26,27 +33,18 @@ import io.pawsomepals.app.data.model.PlaydateMood
 import io.pawsomepals.app.data.model.PlaydateStatus
 import io.pawsomepals.app.data.model.Swipe
 import io.pawsomepals.app.data.model.User
-import io.pawsomepals.app.data.repository.QuestionRepository
+import io.pawsomepals.app.data.repository.PhotoRepository
 import io.pawsomepals.app.service.CalendarService
 import io.pawsomepals.app.service.MatchingService
 import io.pawsomepals.app.service.location.LocationService
-import io.pawsomepals.app.utils.ImageHandler
-import io.pawsomepals.app.utils.NetworkUtils
-import io.pawsomepals.app.viewmodel.AuthViewModel
-import com.google.android.datatransport.runtime.dagger.Provides
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.Query
-import com.google.firebase.storage.FirebaseStorage
-import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.channels.trySendBlocking
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,18 +53,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
-import java.io.File
-import java.io.FileOutputStream
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.coroutines.cancellation.CancellationException
 
 
 @Singleton
@@ -76,17 +70,17 @@ class DataManager @Inject constructor(
     private val auth: FirebaseAuth,
     private val storage: FirebaseStorage,
     @ApplicationContext private val context: Context,
-    private val imageHandler: ImageHandler,
-    private val networkUtils: NetworkUtils,
     private val locationService: LocationService,  // Add this
     private val matchingService: MatchingService,
-    private val questionRepository: QuestionRepository,
     private val calendarService: CalendarService,
-    private val googleAuthManager: GoogleAuthManager
+    private val googleAuthManager: GoogleAuthManager,
+    private val authStateManager: AuthStateManager,
+    private val photoRepository: PhotoRepository,
 
 
 
 ) {
+
     private val calendarDao = appDatabase.playdateCalendarDao()  // Add this
     private val achievementDao = appDatabase.achievementDao()  // Add this line
 
@@ -95,14 +89,20 @@ class DataManager @Inject constructor(
     private val matchDao = appDatabase.matchDao()
     private val messageDao = appDatabase.messageDao()
     private val swipeDao = appDatabase.swipeDao()
-    private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val _authState = MutableStateFlow<AuthStateManager.AuthState>(AuthStateManager.AuthState.Initial)
+    private var cleanupJob: Job? = null
+    private var syncJob: Job? = null
+    private val syncMutex = Mutex()
+    private val managerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+
 
     // Add these new properties
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var syncAttempts = 0
     private var currentSyncJob: Job? = null
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+    private val oneTapClient: SignInClient = Identity.getSignInClient(context)
 
     private val matchCollection = firestore.collection("matches")
     private val swipeCollection = firestore.collection("swipes")
@@ -125,9 +125,10 @@ class DataManager @Inject constructor(
         private const val ONE_HOUR_IN_MILLIS = 60 * 60 * 1000L  // 1 hour in milliseconds
     }
 
-    // Auth state management
-    private val _authState = MutableStateFlow<AuthViewModel.AuthState>(AuthViewModel.AuthState.Initial)
-    val authState = _authState.asStateFlow()
+
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+
 
     private val _uploadProgress = MutableStateFlow<Float>(0f)
     val uploadProgress: StateFlow<Float> = _uploadProgress.asStateFlow()
@@ -137,14 +138,6 @@ class DataManager @Inject constructor(
     private val CHAT_IMAGE_MAX_DIMENSION = 1280 // pixels
     private val CHAT_MEDIA_PATH = "chat_media"
 
-    // Add these helper functions
-    private suspend fun ensureAuthenticated() {
-        val currentUser = auth.currentUser
-        if (currentUser == null) {
-            Log.e("DataManager", "No authenticated user during ensureAuthenticated check")
-            throw AuthenticationException("No authenticated user")
-        }
-    }
 
     private fun calculateBackoffDelay(): Long {
         return minOf(
@@ -154,19 +147,98 @@ class DataManager @Inject constructor(
     }
 
 
-    private var syncJob: Job? = null
 
     init {
-        initializeAuthStateListener()
+        // Enable offline persistence
+        val settings = FirebaseFirestoreSettings.Builder()
+            .setPersistenceEnabled(true)
+            .build()
+        firestore.firestoreSettings = settings
 
-        // Start periodic cleanup of temp files
         scope.launch {
-            while (isActive) {
-                try {
-                    cleanupTempFiles()
-                    delay(30 * 60 * 1000) // Run cleanup every 30 minutes
-                } catch (e: Exception) {
-                    Log.e("DataManager", "Error in periodic cleanup", e)
+            authStateManager.authState.collect { state ->
+                _authState.value = state
+
+                when (state) {
+                    is AuthStateManager.AuthState.Authenticated -> {
+                        Log.d("DataManager", "Authenticated state detected")
+                        _isSyncing.value = true
+                        try {
+                            stopPeriodicSync() // Ensure any existing sync is stopped
+                            syncWithFirestore() // Initial sync
+                            startPeriodicSync() // Start periodic sync
+                            Log.d("DataManager", "Initial sync and periodic sync started")
+                        } catch (e: Exception) {
+                            Log.e("DataManager", "Error during initial sync", e)
+                        } finally {
+                            _isSyncing.value = false
+                        }
+                    }
+
+                    is AuthStateManager.AuthState.Unauthenticated,
+                    is AuthStateManager.AuthState.Error -> {
+                        Log.d("DataManager", "Unauthenticated/Error state detected")
+                        stopPeriodicSync()
+                        scope.launch {
+                            try {
+                                cleanupOnSignOut()
+                                Log.d("DataManager", "Cleanup completed")
+                            } catch (e: Exception) {
+                                Log.e("DataManager", "Error during cleanup", e)
+                            }
+                        }
+                    }
+
+                    else -> {
+                        Log.d("DataManager", "Other auth state detected: $state")
+                    }
+                }
+            }
+        }
+    }
+
+    // In DataManager.kt
+    suspend fun signInWithEmailAndPassword(email: String, password: String): Result<FirebaseUser> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val result = auth.signInWithEmailAndPassword(email, password).await()
+                val user = result.user ?: throw IllegalStateException("Failed to get user after login")
+                Result.success(user)
+            } catch (e: Exception) {
+                Log.e("DataManager", "Login failed", e)
+                Result.failure(e)
+            }
+        }
+    }
+
+
+    private suspend fun ensureAuthenticated() = withContext(Dispatchers.IO) {
+        val supervisor = SupervisorJob()
+        supervisorScope {
+            repeat(3) { attempt ->
+                auth.currentUser?.let {
+                    Log.d(TAG, "Authenticated on attempt ${attempt + 1}")
+                    return@supervisorScope
+                }
+                Log.d(TAG, "Retry attempt ${attempt + 1}")
+                delay(1000L * (attempt + 1))
+            }
+            throw AuthenticationException("Failed to authenticate after retries")
+        }
+    }
+
+    private suspend fun syncUserData(userId: String) {
+        withContext(Dispatchers.IO) {
+            val firestoreSnapshot = firestore.collection("users")
+                .document(userId)
+                .get()
+                .await()
+
+            if (firestoreSnapshot.exists()) {
+                val user = firestoreSnapshot.toObject(User::class.java)
+                user?.let {
+                    userDao.insertUser(it)
+                    Log.d("DataManager", "User data synced")
                 }
             }
         }
@@ -239,6 +311,7 @@ class DataManager @Inject constructor(
             )
         )
     }
+
 
     suspend fun updatePlaydateStatus(playdateId: String, newStatus: PlaydateStatus) {
         withContext(Dispatchers.IO) {
@@ -362,7 +435,6 @@ class DataManager @Inject constructor(
     }
 
 
-
     suspend fun initializeChatForMatch(match: Match): String {
         try {
             ensureAuthenticated()
@@ -455,10 +527,10 @@ class DataManager @Inject constructor(
                     val messages = snapshot.toObjects(Message::class.java)
                     trySendBlocking(messages)
 
-                    // Update local database
-                    coroutineScope.launch {
+                    // Launch in scope passed to callbackFlow
+                    launch {
                         messages.forEach {
-                            appDatabase.messageDao().insertMessage(it)
+                            messageDao.insertMessage(it)
                         }
                     }
                 }
@@ -466,6 +538,7 @@ class DataManager @Inject constructor(
 
         awaitClose { listener.remove() }
     }
+
 
     fun observeUserChats(userId: String): Flow<List<Chat>> = callbackFlow {
         val listener = firestore.collection("chats")
@@ -481,8 +554,8 @@ class DataManager @Inject constructor(
                     val chats = snapshot.toObjects(Chat::class.java)
                     trySendBlocking(chats)
 
-                    // Update local database
-                    coroutineScope.launch {
+                    // Launch in scope passed to callbackFlow
+                    launch {
                         chats.forEach {
                             appDatabase.chatDao().insertChat(it)
                         }
@@ -549,25 +622,50 @@ class DataManager @Inject constructor(
             throw e
         }
     }
+    fun startSync() {
+        syncJob?.cancel()
+        syncJob = managerScope.launch {
+            try {
+                authStateManager.authState.collect { state ->
+                    when (state) {
+                        is AuthStateManager.AuthState.Authenticated -> {
+                            syncMutex.withLock {
+                                _isSyncing.value = true
+                                try {
+                                    syncWithFirestore()
+                                    startPeriodicSync()
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    Log.e("DataManager", "Sync error", e)
+                                } finally {
+                                    _isSyncing.value = false
+                                }
+                            }
+                        }
+                        else -> stopPeriodicSync()
+                    }
+                }
+            } catch (e: CancellationException) {
+                Log.d("DataManager", "Sync cancelled normally")
+            }
+        }
+    }
 
-    private fun startPeriodicSync() {
-        Log.d("DataManager", "Starting periodic sync")
-        stopPeriodicSync()
 
-        currentSyncJob = scope.launch {
+    fun startPeriodicSync() {
+        scope.launch {
             while (isActive) {
                 try {
-                    _isSyncing.value = true
-                    syncWithFirestore()
-                    delay(5 * 60 * 1000) // 5 minutes delay
+                    delay(5 * 60 * 1000)
+                    syncMutex.withLock {
+                        syncWithFirestore()
+                    }
                 } catch (e: CancellationException) {
-                    Log.d("DataManager", "Sync job cancelled normally")
                     break
                 } catch (e: Exception) {
-                    Log.e("DataManager", "Error during periodic sync", e)
+                    Log.e("DataManager", "Periodic sync error", e)
                     delay(calculateBackoffDelay())
-                } finally {
-                    _isSyncing.value = false
                 }
             }
         }
@@ -582,27 +680,15 @@ class DataManager @Inject constructor(
         }
     }
 
-    private fun stopPeriodicSync() {
+    fun stopPeriodicSync() {
         Log.d("DataManager", "Stopping periodic sync")
         syncJob?.cancel()
         syncJob = null
     }
 
-    private fun initializeAuthStateListener() {
-        auth.addAuthStateListener { firebaseAuth ->
-            val user = firebaseAuth.currentUser
-            if (user != null) {
-                Log.d("DataManager", "User authenticated: ${user.uid}")
-                _authState.value = AuthViewModel.AuthState.Authenticated
-                startPeriodicSync()
-            } else {
-                Log.d("DataManager", "No authenticated user")
-                _authState.value = AuthViewModel.AuthState.Unauthenticated
-                stopPeriodicSync()
-                cleanupOnSignOut()
-            }
-        }
-    }
+
+
+
 
 
 
@@ -625,19 +711,19 @@ class DataManager @Inject constructor(
         }
     }
 
-    private suspend fun syncLocalDogsWithFirestore(firestoreDogs: List<Dog>, userId: String) {
-        // Get all local dogs for this user
-        val localDogs = dogDao.getAllDogsByOwnerId(userId)
+    private suspend fun syncDogsWithFirestore() {
+        withContext(Dispatchers.IO) {
+            try {
+                val firestoreDogs = firestore.collection("dogs")
+                    .get()
+                    .await()
+                    .toObjects(Dog::class.java)
 
-        // Update or insert Firestore dogs
-        firestoreDogs.forEach { firestoreDog ->
-            dogDao.insertDog(firestoreDog)
-        }
-
-        // Delete local dogs that no longer exist in Firestore
-        localDogs.forEach { localDog ->
-            if (!firestoreDogs.any { it.id == localDog.id }) {
-                dogDao.deleteDogById(localDog.id)
+                firestoreDogs.forEach { dog ->
+                    dogDao.insertDog(dog)
+                }
+            } catch (e: Exception) {
+                Log.e("DataManager", "Error syncing dogs", e)
             }
         }
     }
@@ -654,44 +740,48 @@ class DataManager @Inject constructor(
         }
     }
 
-    suspend fun syncWithFirestore() {
+    suspend fun syncWithFirestore() = withContext(Dispatchers.IO) {
+        coroutineScope {
+            val currentUser = auth.currentUser ?: throw IllegalStateException("No authenticated user")
+
+            supervisorScope {
+                launch { syncUserData(currentUser.uid) }
+                launch { syncDogData(currentUser.uid) }
+            }
+        }
+    }
+
+    private suspend fun syncDogData(userId: String) {
         withContext(Dispatchers.IO) {
             try {
-                val currentUser = auth.currentUser ?: throw IllegalStateException("No authenticated user")
+                // Get dogs from Firestore
+                val firestoreDogs = firestore.collection("dogs")
+                    .whereEqualTo("ownerId", userId)
+                    .get()
+                    .await()
+                    .documents
+                    .mapNotNull { it.toObject(Dog::class.java) }
 
-                // Add retry logic for initial sync
-                var attempts = 0
-                val maxAttempts = 3
+                // Get local dogs
+                val localDogs = dogDao.getAllDogsByOwnerId(userId)
 
-                while (attempts < maxAttempts) {
-                    try {
-                        val userData = getUserFromFirestore(currentUser.uid)
-                        if (userData != null) {
-                            saveUserToLocalDatabase(userData)
-                            Log.d("DataManager", "User data synced successfully")
-                            break
-                        }
-                        delay(1000L * (attempts + 1)) // Exponential backoff
-                        attempts++
-                    } catch (e: Exception) {
-                        Log.e("DataManager", "Sync attempt ${attempts + 1} failed", e)
-                        if (attempts == maxAttempts - 1) throw e
-                        attempts++
-                        delay(1000L * attempts)
+                // Update or insert Firestore dogs to local DB
+                firestoreDogs.forEach { firestoreDog ->
+                    dogDao.insertDog(firestoreDog)
+                    Log.d("DataManager", "Synced dog from Firestore: ${firestoreDog.id}")
+                }
+
+                // Remove local dogs that don't exist in Firestore
+                localDogs.forEach { localDog ->
+                    if (!firestoreDogs.any { it.id == localDog.id }) {
+                        dogDao.deleteDogById(localDog.id)
+                        Log.d("DataManager", "Removed local dog: ${localDog.id}")
                     }
                 }
 
-                // Only proceed with dog sync if user sync succeeded
-                val dogData = getDogFromFirestore(currentUser.uid)
-                if (dogData != null) {
-                    saveDogToLocalDatabase(dogData)
-                    Log.d("DataManager", "Dog data synced successfully")
-                } else {
-                    Log.d("DataManager", "No dog data found to sync")
-                }
-
+                Log.d("DataManager", "Dog sync completed successfully")
             } catch (e: Exception) {
-                Log.e("DataManager", "Error in syncWithFirebase", e)
+                Log.e("DataManager", "Error syncing dog data", e)
                 throw e
             }
         }
@@ -797,40 +887,52 @@ class DataManager @Inject constructor(
     suspend fun getOnlinePotentialMatches(dogId: String, limit: Int = 20): List<Dog> {
         try {
             ensureAuthenticated()
-            val currentDog = dogCollection.document(dogId).get().await().toObject(Dog::class.java)
-                ?: throw IllegalStateException("Current dog not found")
+            Log.d(TAG, "Getting potential matches for dog: $dogId")
 
-            // Get already swiped profiles
+            val currentDog = dogCollection.document(dogId).get().await().toObject(Dog::class.java)
+            Log.d(TAG, "Current dog: ${currentDog?.id}, owner: ${currentDog?.ownerId}")
+
+            val allDogs = dogCollection
+                .get()
+                .await()
+                .toObjects(Dog::class.java)
+            Log.d(TAG, "Total dogs in database: ${allDogs.size}")
+
             val swipedProfiles = swipeCollection
-                .whereEqualTo("swiperId", currentDog.ownerId)
+                .whereEqualTo("swiperId", currentDog?.ownerId)
                 .get()
                 .await()
                 .toObjects(Swipe::class.java)
                 .map { it.swipedDogId }
+            Log.d(TAG, "Already swiped dogs: ${swipedProfiles.size}")
 
-            // Query for potential matches
             val potentialMatches = dogCollection
                 .whereNotEqualTo("id", dogId)
-                .whereNotEqualTo("ownerId", currentDog.ownerId)
+                .whereNotEqualTo("ownerId", currentDog?.ownerId)
                 .get()
                 .await()
                 .toObjects(Dog::class.java)
                 .filter { dog ->
-                    // Filter out already swiped profiles
-                    !swipedProfiles.contains(dog.id) &&
-                            // Filter by location if available
-                            isWithinMatchingDistance(currentDog, dog)
+                    val isValidMatch = !swipedProfiles.contains(dog.id) &&
+                            isWithinMatchingDistance(currentDog!!, dog)
+                    Log.d(TAG, """
+                    Evaluating dog ${dog.id}:
+                    - Owner: ${dog.ownerId}
+                    - Already swiped: ${swipedProfiles.contains(dog.id)}
+                    - Within distance: ${currentDog?.let { isWithinMatchingDistance(it, dog) }}
+                    - Is valid match: $isValidMatch
+                """.trimIndent())
+                    isValidMatch
                 }
                 .take(limit)
 
+            Log.d(TAG, "Found ${potentialMatches.size} potential matches")
             return potentialMatches
-
         } catch (e: Exception) {
-            Log.e("DataManager", "Error getting online potential matches", e)
+            Log.e(TAG, "Error getting online potential matches", e)
             throw e
         }
     }
-
     // Get active matches from online source
     fun observeOnlineMatches(dogId: String): Flow<List<Match>> = callbackFlow {
         val listenerRegistration = matchCollection
@@ -845,8 +947,8 @@ class DataManager @Inject constructor(
                 if (snapshot != null) {
                     val matches = snapshot.toObjects(Match::class.java)
                     trySendBlocking(matches)
-                    // Update local database
-                    coroutineScope.launch {
+
+                    launch {
                         matches.forEach { matchDao.insertMatch(it) }
                     }
                 }
@@ -874,14 +976,17 @@ class DataManager @Inject constructor(
                 )
                 .await()
 
-            // If accepted, create chat and send notifications
-            if (accepted) {
-                createChatRoomForMatch(match)
-                sendMatchNotifications(match)
+            // Handle match acceptance side effects
+            when {
+                accepted -> {
+                    createChatRoomForMatch(match)
+                    sendMatchNotifications(match)
+                }
             }
 
             // Update local database after successful online operation
-            matchDao.getMatchById(matchId)?.let { localMatch ->
+            val localMatch = matchDao.getMatchById(matchId)
+            if (localMatch != null) {
                 matchDao.updateMatch(localMatch.copy(status = newStatus))
             }
 
@@ -907,18 +1012,21 @@ class DataManager @Inject constructor(
         }
     }
 
-    private suspend fun createChatRoomForMatch(match: Match) {
-        // Implement chat room creation logic here
-    }
 
-    private suspend fun sendMatchNotifications(match: Match) {
-        // Implement notification logic here
-    }
 
 
     private suspend fun getUserFromFirestore(userId: String): User? {
         return try {
-            firestore.collection("users").document(userId).get().await().toObject(User::class.java)
+            val snapshot = firestore.collection("users")
+                .document(userId)
+                .get()
+                .await()
+
+            if (snapshot.exists()) {
+                snapshot.toObject(User::class.java)
+            } else {
+                null
+            }
         } catch (e: Exception) {
             Log.e("DataManager", "Error fetching user data from Firestore", e)
             null
@@ -942,31 +1050,31 @@ class DataManager @Inject constructor(
 
     private suspend fun saveUserToLocalDatabase(user: User) {
         withContext(Dispatchers.IO) {
-            userDao.insertUser(user)
+            try {
+                userDao.insertUser(user)
+                Log.d("DataManager", "User saved to local database: ${user.id}")
+            } catch (e: Exception) {
+                Log.e("DataManager", "Error saving user to local database", e)
+            }
         }
     }
 
     private suspend fun saveDogToLocalDatabase(dog: Dog) {
         withContext(Dispatchers.IO) {
             try {
-                // First ensure the user exists
-                val user = userDao.getUserById(dog.ownerId)
-                if (user == null) {
-                    // If user doesn't exist, fetch from Firestore and save
+                // First check if user exists
+                val user = userDao.getUserById(dog.ownerId) ?: run {
+                    // If not, fetch and save user from Firestore
                     val firestoreUser = getUserFromFirestore(dog.ownerId)
-                    if (firestoreUser != null) {
-                        userDao.insertUser(firestoreUser)
-                    } else {
-                        throw IllegalStateException("Cannot save dog: Owner not found in Firestore")
-                    }
+                        ?: return@withContext // Skip if user not found
+                    userDao.insertUser(firestoreUser)
+                    firestoreUser
                 }
 
-                // Now safe to save the dog
+                // Now safe to insert dog
                 dogDao.insertDog(dog)
-                Log.d("DataManager", "Successfully saved dog to local database: ${dog.id}")
             } catch (e: Exception) {
-                Log.e("DataManager", "Error saving dog to local database", e)
-                throw e
+                Log.e("DataManager", "Error saving dog", e)
             }
         }
     }
@@ -988,39 +1096,181 @@ class DataManager @Inject constructor(
         }
     }
 
-    @Provides
-    @Singleton
-    fun provideDataManager(
-        appDatabase: AppDatabase,
-        firestore: FirebaseFirestore,
-        auth: FirebaseAuth,
-        storage: FirebaseStorage,
-        @ApplicationContext context: Context,
-        questionRepository: QuestionRepository,
-        imageHandler: ImageHandler,
-        networkUtils: NetworkUtils,
-        locationService: LocationService,
-        matchingService: MatchingService,
-        calendarService: CalendarService,    // Added
-        googleAuthManager: GoogleAuthManager  // Added
-    ): DataManager {
-        return DataManager(
-            appDatabase = appDatabase,
-            firestore = firestore,
-            auth = auth,
-            storage = storage,
-            context = context,
-            questionRepository = questionRepository,
-            imageHandler = imageHandler,
-            networkUtils = networkUtils,
-            locationService = locationService,
-            matchingService = matchingService,
-            calendarService = calendarService,    // Added
-            googleAuthManager = googleAuthManager  // Added
+
+    private suspend fun syncExistingUserDogs(existingUser: User) {
+        val existingDogs = firestore.collection("dogs")
+            .whereEqualTo("ownerId", existingUser.id)
+            .get()
+            .await()
+            .toObjects(Dog::class.java)
+
+        existingDogs.forEach { dog ->
+            dogDao.insertDog(dog)
+        }
+        Log.d("UserRepository", "Existing user synced: ${existingUser.id}")
+    }
+    private suspend fun createInitialDogProfile(userId: String, petName: String, user: User) {
+        val dogId = UUID.randomUUID().toString()
+        val dog = Dog(
+            id = dogId,
+            ownerId = userId,
+            name = petName,
+            // Add other required Dog fields with default values
         )
+
+        // Save dog to Firestore
+        firestore.collection("dogs")
+            .document(dog.id)
+            .set(dog)
+            .await()
+
+        // Save dog locally
+        dogDao.insertDog(dog)
+
+        // Update user's dogIds
+        val updatedUser = user.copy(dogIds = listOf(dogId))
+        firestore.collection("users")
+            .document(userId)
+            .set(updatedUser)
+            .await()
+
+        userDao.updateUser(updatedUser)
     }
 
 
+    private suspend fun createChatRoomForMatch(match: Match) {
+        try {
+            // Get dog profiles for both users
+            val dog1 = dogDao.getDogById(match.dog1Id)
+            val dog2 = dogDao.getDogById(match.dog2Id)
+
+            if (dog1 == null || dog2 == null) {
+                Log.e("DataManager", "Unable to find dogs for chat room creation")
+                return
+            }
+
+            // Create new chat
+            val chat = Chat(
+                id = UUID.randomUUID().toString(),
+                user1Id = match.user1Id,
+                user2Id = match.user2Id,
+                dog1Id = match.dog1Id,
+                dog2Id = match.dog2Id,
+                matchId = match.id,
+                participants = listOf(match.user1Id, match.user2Id),
+                created = System.currentTimeMillis()
+            )
+
+            // Save chat to Firestore
+            firestore.collection("chats")
+                .document(chat.id)
+                .set(chat)
+                .await()
+
+            // Update match with chat reference
+            firestore.collection("matches")
+                .document(match.id)
+                .update("chatId", chat.id)
+                .await()
+
+            // Save to local database
+            appDatabase.chatDao().insertChat(chat)
+
+            // Send welcome message
+            sendMessage(
+                chatId = chat.id,
+                content = generateWelcomeMessage(match, dog1, dog2),
+                type = MessageType.SYSTEM,
+                metadata = mapOf(
+                    "matchId" to match.id,
+                    "compatibilityScore" to match.compatibilityScore.toString()
+                )
+            )
+
+            Log.d("DataManager", "Chat room created for match: ${match.id}")
+        } catch (e: Exception) {
+            Log.e("DataManager", "Error creating chat room for match", e)
+        }
+    }
+
+    private fun generateWelcomeMessage(match: Match, dog1: Dog, dog2: Dog): String {
+        val matchReasons = match.matchReasons.take(3).joinToString(", ")
+        return """
+        🎉 It's a match! ${dog1.name} and ${dog2.name} seem perfect for a playdate!
+        
+        Compatibility Score: ${(match.compatibilityScore * 100).toInt()}%
+        Top Match Reasons: $matchReasons
+        
+        Start chatting to plan your first playdate! 🐾
+    """.trimIndent()
+    }
+
+    private suspend fun sendMatchNotifications(match: Match) {
+        try {
+            val dog1 = dogDao.getDogById(match.dog1Id)
+            val dog2 = dogDao.getDogById(match.dog2Id)
+
+            if (dog1 == null || dog2 == null) {
+                Log.e("DataManager", "Unable to find dogs for notifications")
+                return
+            }
+
+            // Create notification data
+            val notification = hashMapOf(
+                "type" to "NEW_MATCH",
+                "matchId" to match.id,
+                "timestamp" to System.currentTimeMillis(),
+                "dog1" to mapOf(
+                    "id" to dog1.id,
+                    "name" to dog1.name,
+                    "ownerId" to dog1.ownerId
+                ),
+                "dog2" to mapOf(
+                    "id" to dog2.id,
+                    "name" to dog2.name,
+                    "ownerId" to dog2.ownerId
+                ),
+                "compatibilityScore" to match.compatibilityScore
+            )
+
+            // Save notification to Firestore
+            firestore.collection("notifications")
+                .add(notification)
+                .await()
+
+            // Send FCM notifications to both users
+            val user1Notification = hashMapOf(
+                "to" to "/topics/user_${match.user1Id}",
+                "notification" to mapOf(
+                    "title" to "New Match! 🎉",
+                    "body" to "Your dog matched with ${dog2.name}!"
+                ),
+                "data" to mapOf(
+                    "type" to "match",
+                    "matchId" to match.id
+                )
+            )
+
+            val user2Notification = hashMapOf(
+                "to" to "/topics/user_${match.user2Id}",
+                "notification" to mapOf(
+                    "title" to "New Match! 🎉",
+                    "body" to "Your dog matched with ${dog1.name}!"
+                ),
+                "data" to mapOf(
+                    "type" to "match",
+                    "matchId" to match.id
+                )
+            )
+
+            // Send notifications using Firebase Cloud Messaging
+            // This should be handled by your notification service
+
+            Log.d("DataManager", "Match notifications sent for match: ${match.id}")
+        } catch (e: Exception) {
+            Log.e("DataManager", "Error sending match notifications", e)
+        }
+    }
 
     private fun calculateInSampleSize(
         options: android.graphics.BitmapFactory.Options,
@@ -1044,92 +1294,36 @@ class DataManager @Inject constructor(
 
 
     suspend fun createOrUpdateDogProfile(dog: Dog) {
-        try {
-            Log.d("DataManager", "Starting createOrUpdateDogProfile process")
-            Log.d("DataManager", "Initial dog data: id=${dog.id}, ownerId=${dog.ownerId}, name=${dog.name}")
-
-            // Try to get current user with retry mechanism
-            var currentUser = auth.currentUser
-            var attempts = 0
-            val maxAttempts = 3
-
-            while (currentUser == null && attempts < maxAttempts) {
-                delay(1000L * (attempts + 1))
-                currentUser = auth.currentUser
-                attempts++
-                Log.d("DataManager", "Auth attempt $attempts, user: ${currentUser?.uid}")
-            }
-
-            // If still no user, try to directly verify from Firestore
-            if (currentUser == null) {
-                val userDoc = firestore.collection("users")
-                    .document(dog.ownerId)
-                    .get()
-                    .await()
-
-                if (!userDoc.exists()) {
-                    Log.e("DataManager", "Neither auth user nor Firestore user found")
-                    throw IllegalStateException("No authenticated user found")
-                }
-
-                Log.d("DataManager", "User verified through Firestore: ${dog.ownerId}")
-            } else {
-                Log.d("DataManager", "User verified through Firebase Auth: ${currentUser.uid}")
-            }
-
-            // At this point, we've verified the user exists either through Auth or Firestore
-            val dogRef = if (dog.id.isBlank()) {
-                Log.d("DataManager", "Creating new document reference for new dog")
-                firestore.collection("dogs").document()
-            } else {
-                Log.d("DataManager", "Using existing document reference: ${dog.id}")
-                firestore.collection("dogs").document(dog.id)
-            }
-
-            val dogToSave = if (dog.id.isBlank()) {
-                Log.d("DataManager", "Generating new dog ID: ${dogRef.id}")
-                dog.copy(id = dogRef.id)
-            } else {
-                Log.d("DataManager", "Using existing dog ID: ${dog.id}")
-                dog
-            }
-
-            // Save to Firestore with retry mechanism
-            var saveAttempts = 0
-            val maxSaveAttempts = 3
-            var lastError: Exception? = null
-
-            while (saveAttempts < maxSaveAttempts) {
-                try {
-                    dogRef.set(dogToSave).await()
-                    Log.d("DataManager", "Successfully saved dog to Firestore: ${dogToSave.id}")
-                    break
-                } catch (e: Exception) {
-                    lastError = e
-                    saveAttempts++
-                    if (saveAttempts == maxSaveAttempts) {
-                        Log.e("DataManager", "Failed all attempts to save to Firestore")
-                        throw e
-                    }
-                    delay(1000L * saveAttempts)
-                }
-            }
-
-            // Save to local database
+        withContext(Dispatchers.IO) {
             try {
-                dogDao.insertDog(dogToSave)
-                Log.d("DataManager", "Successfully saved dog to local database: ${dogToSave.id}")
+                val currentUser = auth.currentUser ?: run {
+                    delay(500) // Give Firebase time to initialize
+                    auth.currentUser
+                } ?: throw IllegalStateException("No authenticated user")
+
+                val dogRef = if (dog.id.isBlank()) {
+                    firestore.collection("dogs").document()
+                        .also { dog.id = it.id }
+                } else {
+                    firestore.collection("dogs").document(dog.id)
+                }
+
+                // Save to Firestore first
+                dogRef.set(dog).await()
+
+                // Then use the safe transaction for local DB
+                try {
+                    appDatabase.dogDao().insertDogWithOwnerCheck(dog, appDatabase.userDao())
+                } catch (e: Exception) {
+                    Log.e("DataManager", "Local DB save failed - continuing", e)
+                    // Don't throw - Firestore is source of truth
+                }
+
+                Log.d("DataManager", "Dog profile created/updated: ${dog.id}")
             } catch (e: Exception) {
-                Log.e("DataManager", "Local database save failed for dog ${dogToSave.id}", e)
-                // Don't throw here - we've already saved to Firestore
+                Log.e("DataManager", "Error creating/updating dog profile", e)
+                throw e
             }
-
-            Log.d("DataManager", "Dog profile created/updated successfully")
-
-        } catch (e: Exception) {
-            Log.e("DataManager", "Critical error in createOrUpdateDogProfile", e)
-            Log.e("DataManager", "Error details - Dog: id=${dog.id}, name=${dog.name}")
-            throw e
         }
     }
 
@@ -1145,26 +1339,6 @@ class DataManager @Inject constructor(
             val uploadTask = imageRef.putFile(uri).await()
             val downloadUrl = uploadTask.storage.downloadUrl.await().toString()
 
-            val dog = dogDao.getDogById(dogId) ?: throw IllegalStateException("Dog not found")
-            val updatedPhotoUrls = dog.photoUrls.toMutableList()
-
-            // If it's the first photo (index 0), clear the list and start fresh
-            if (index == 0) {
-                updatedPhotoUrls.clear()
-                updatedPhotoUrls.add(downloadUrl)
-            } else {
-                // For additional photos, add or update at the specific index
-                if (index < updatedPhotoUrls.size) {
-                    updatedPhotoUrls[index] = downloadUrl
-                } else {
-                    updatedPhotoUrls.add(downloadUrl)
-                }
-            }
-
-            val updatedDog = dog.copy(photoUrls = updatedPhotoUrls)
-            createOrUpdateDogProfile(updatedDog)
-
-            Log.d("DataManager", "Updated dog photo URLs: $updatedPhotoUrls")
             downloadUrl
         } catch (e: Exception) {
             Log.e("DataManager", "Error updating dog profile picture", e)
@@ -1205,50 +1379,9 @@ class DataManager @Inject constructor(
             _uploadProgress.value = 0f
         }
     }
-    private suspend fun compressChatImage(uri: Uri): Uri {
+    suspend fun compressChatImage(uri: Uri): Uri {
         return withContext(Dispatchers.IO) {
-            try {
-                val inputStream = context.contentResolver.openInputStream(uri)
-                val options = BitmapFactory.Options().apply {
-                    inJustDecodeBounds = true
-                }
-                BitmapFactory.decodeStream(inputStream, null, options)
-                inputStream?.close()
-
-                val scale = calculateScaleFactor(
-                    options.outWidth,
-                    options.outHeight,
-                    CHAT_IMAGE_MAX_DIMENSION
-                )
-
-                val compressedOptions = BitmapFactory.Options().apply {
-                    inSampleSize = scale
-                }
-
-                val compressedBitmap = context.contentResolver.openInputStream(uri)?.use {
-                    BitmapFactory.decodeStream(it, null, compressedOptions)
-                } ?: throw IllegalStateException("Could not decode image")
-
-                val tempFile = File(
-                    context.cacheDir,
-                    "compressed_chat_${System.currentTimeMillis()}.jpg"
-                )
-
-                FileOutputStream(tempFile.absolutePath).use { out ->
-                    compressedBitmap.compress(Bitmap.CompressFormat.JPEG, 80, out)
-                }
-
-                compressedBitmap.recycle()
-
-                FileProvider.getUriForFile(
-                    context,
-                    "${context.packageName}.fileprovider",
-                    tempFile
-                )
-            } catch (e: Exception) {
-                Log.e("DataManager", "Error compressing chat image", e)
-                throw e
-            }
+            photoRepository.compressImage(uri, CHAT_IMAGE_MAX_DIMENSION)
         }
     }
     private fun calculateScaleFactor(width: Int, height: Int, maxDimension: Int): Int {
@@ -1269,84 +1402,84 @@ class DataManager @Inject constructor(
             throw e
         }
     }
-
-    suspend fun saveQuestionnaireResponses(
-        userId: String,
-        dogId: String,
-        responses: Map<String, String>
-    ) {
+    suspend fun saveQuestionnaireResponses(userId: String, dogId: String, responses: Map<String, String>) {
         try {
-            // Create a document ID that combines userId and dogId
             val documentId = "${userId}_${dogId}"
-
+            // First save raw responses to questionnaires collection
             firestore.collection("questionnaires")
                 .document(documentId)
                 .set(responses)
                 .await()
 
-            Log.d("DataManager", "Questionnaire responses saved successfully for dog: $dogId")
+            Log.d("DataManager", "Questionnaire responses saved: $dogId")
 
-            // After saving to Firestore, update the dog profile with selected responses
             val dogRef = firestore.collection("dogs").document(dogId)
             val dogSnapshot = dogRef.get().await()
 
-            if (dogSnapshot.exists()) {
-                val updateMap = mutableMapOf<String, Any>()
+            if (!dogSnapshot.exists()) return
 
-                // Map specific questionnaire responses to dog profile fields
-                responses["energyLevel"]?.let { updateMap["energyLevel"] = it }
-                responses["friendliness"]?.let { updateMap["friendliness"] = it }
-                responses["trainability"]?.let { updateMap["trainability"] = it }
-                responses["friendlyWithDogs"]?.let { updateMap["friendlyWithDogs"] = it }
-                responses["friendlyWithChildren"]?.let { updateMap["friendlyWithChildren"] = it }
-                responses["friendlyWithStrangers"]?.let { updateMap["friendlyWithStrangers"] = it }
-                responses["exerciseNeeds"]?.let { updateMap["exerciseNeeds"] = it }
-                responses["groomingNeeds"]?.let { updateMap["groomingNeeds"] = it }
-                responses["specialNeeds"]?.let { updateMap["specialNeeds"] = it }
-                responses["isSpayedNeutered"]?.let { updateMap["isSpayedNeutered"] = it }
+            val updateMap = mutableMapOf<String, Any>()
 
-                if (updateMap.isNotEmpty()) {
-                    dogRef.update(updateMap).await()
+            // Handle regular string fields
+            val stringFields = listOf(
+                "energyLevel", "friendliness", "trainability", "friendlyWithDogs",
+                "friendlyWithChildren", "friendlyWithStrangers", "exerciseNeeds",
+                "groomingNeeds", "specialNeeds"
+            )
 
-                    // Update local database
-                    val updatedDog = dogSnapshot.toObject(Dog::class.java)?.copy(
-                        energyLevel = responses["energyLevel"]
-                            ?: dogSnapshot.getString("energyLevel") ?: "",
-                        friendliness = responses["friendliness"]
-                            ?: dogSnapshot.getString("friendliness") ?: "",
-                        trainability = responses["trainability"]
-                            ?: dogSnapshot.getString("trainability"),
-                        friendlyWithDogs = responses["friendlyWithDogs"]
-                            ?: dogSnapshot.getString("friendlyWithDogs"),
-                        friendlyWithChildren = responses["friendlyWithChildren"]
-                            ?: dogSnapshot.getString("friendlyWithChildren"),
-                        friendlyWithStrangers = responses["friendlyWithStrangers"]
-                            ?: dogSnapshot.getString("friendlyWithStrangers"),
-                        exerciseNeeds = responses["exerciseNeeds"]
-                            ?: dogSnapshot.getString("exerciseNeeds"),
-                        groomingNeeds = responses["groomingNeeds"]
-                            ?: dogSnapshot.getString("groomingNeeds"),
-                        specialNeeds = responses["specialNeeds"]
-                            ?: dogSnapshot.getString("specialNeeds"),
-                        isSpayedNeutered = responses["isSpayedNeutered"]
-                            ?: dogSnapshot.getString("isSpayedNeutered")
-                    )
+            stringFields.forEach { field ->
+                responses[field]?.let { updateMap[field] = it }
+            }
 
-                    updatedDog?.let {
-                        dogDao.insertDog(it)
-                        Log.d("DataManager", "Saving questionnaire responses for dog: $dogId")
-                        Log.d("DataManager", "Responses: $responses")
-                    }
+            // Handle isSpayedNeutered separately - store as Boolean in Firestore
+            responses["isSpayedNeutered"]?.let { value ->
+                // Convert string to Boolean before storing
+                val booleanValue = when (value.toLowerCase()) {
+                    "true", "yes", "1" -> true
+                    "false", "no", "0" -> false
+                    else -> null  // Handle invalid values
+                }
+                // Only update if we got a valid boolean value
+                booleanValue?.let {
+                    updateMap["isSpayedNeutered"] = it
                 }
             }
 
+            if (updateMap.isNotEmpty()) {
+                // Update Firestore
+                dogRef.update(updateMap).await()
+
+                // Update local database
+                val existingDog = dogSnapshot.toObject(Dog::class.java)
+                existingDog?.let { dog ->
+                    val updatedDog = dog.copy(
+                        energyLevel = responses["energyLevel"] ?: dog.energyLevel,
+                        friendliness = responses["friendliness"] ?: dog.friendliness,
+                        trainability = responses["trainability"] ?: dog.trainability,
+                        friendlyWithDogs = responses["friendlyWithDogs"] ?: dog.friendlyWithDogs,
+                        friendlyWithChildren = responses["friendlyWithChildren"] ?: dog.friendlyWithChildren,
+                        friendlyWithStrangers = responses["friendlyWithStrangers"] ?: dog.friendlyWithStrangers,
+                        exerciseNeeds = responses["exerciseNeeds"] ?: dog.exerciseNeeds,
+                        groomingNeeds = responses["groomingNeeds"] ?: dog.groomingNeeds,
+                        specialNeeds = responses["specialNeeds"] ?: dog.specialNeeds,
+                        // Convert to Boolean properly
+                        isSpayedNeutered = responses["isSpayedNeutered"]?.let { value ->
+                            when (value.toLowerCase()) {
+                                "true", "yes", "1" -> true
+                                "false", "no", "0" -> false
+                                else -> dog.isSpayedNeutered  // Keep existing value if invalid
+                            }
+                        } ?: dog.isSpayedNeutered  // Keep existing value if not provided
+                    )
+                    dogDao.insertDog(updatedDog)
+                    Log.d("DataManager", "Dog profile updated: $dogId")
+                }
+            }
         } catch (e: Exception) {
-            Log.e("DataManager", "Error saving questionnaire responses", e)
+            Log.e("DataManager", "Error saving questionnaire", e)
             throw e
         }
     }
-
-
     suspend fun getQuestionnaireResponses(userId: String, dogId: String): Map<String, String>? {
         return try {
             val document = firestore.collection("questionnaires")
@@ -1423,8 +1556,9 @@ class DataManager @Inject constructor(
                 if (snapshot != null && snapshot.exists()) {
                     val user = snapshot.toObject(User::class.java)
                     trySendBlocking(user)
+
                     user?.let {
-                        coroutineScope.launch {
+                        launch {
                             userDao.insertUser(it)
                         }
                     }
@@ -1448,8 +1582,9 @@ class DataManager @Inject constructor(
                 if (snapshot != null && !snapshot.isEmpty) {
                     val dog = snapshot.documents.firstOrNull()?.toObject(Dog::class.java)
                     trySendBlocking(dog)
+
                     dog?.let {
-                        coroutineScope.launch {
+                        launch {
                             dogDao.insertDog(it)
                         }
                     }
@@ -1473,7 +1608,8 @@ class DataManager @Inject constructor(
                 if (snapshot != null) {
                     val dogs = snapshot.toObjects(Dog::class.java)
                     trySendBlocking(dogs)
-                    coroutineScope.launch {
+
+                    launch {
                         dogs.forEach { dogDao.insertDog(it) }
                     }
                 } else {
@@ -1483,7 +1619,6 @@ class DataManager @Inject constructor(
 
         awaitClose { listenerRegistration.remove() }
     }
-
     suspend fun deleteDogProfile(dogId: String) {
         try {
             val currentUser = auth.currentUser
@@ -1653,28 +1788,8 @@ class DataManager @Inject constructor(
         }
     }
 
-    fun getOutputFileUri(context: Context): Uri {
-        return try {
-            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-            val storageDir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
-            val imageFile = File.createTempFile(
-                "PROFILE_${timeStamp}_",
-                ".jpg",
-                storageDir
-            ).apply {
-                // Ensure the file is deleted when the io.pawsomepals.app closes
-                deleteOnExit()
-            }
-
-            FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                imageFile
-            )
-        } catch (e: Exception) {
-            Log.e("DataManager", "Error creating image file", e)
-            throw e
-        }
+    fun getOutputFileUri(): Uri {
+        return photoRepository.getOutputFileUri(context)
     }
 
 
@@ -1703,53 +1818,29 @@ class DataManager @Inject constructor(
         }
     }
 
-    private fun cleanupOnSignOut() {
-        val cleanupJob = scope.launch {
-            try {
-                // First check if there are any pending operations
-                if (_isSyncing.value) {
-                    Log.d("DataManager", "Waiting for sync to complete before cleanup")
-                    delay(1000) // Give sync a chance to complete
-                }
-
-                // Cancel ongoing operations
-                currentSyncJob?.cancel()
-                syncJob?.cancel()
-
-                // Only clear data if we're actually signed out
-                if (auth.currentUser == null) {
-                    withContext(Dispatchers.IO) {
-                        appDatabase.clearAllTables()
-                        context.getSharedPreferences("YourAppPrefs", Context.MODE_PRIVATE)
-                            .edit()
-                            .clear()
-                            .apply()
-                    }
-                    Log.d("DataManager", "Local data cleared during cleanup")
-                } else {
-                    Log.d("DataManager", "Skipping data clear as user is still authenticated")
-                }
-
-                Log.d("DataManager", "Cleanup completed successfully")
-            } catch (e: CancellationException) {
-                Log.d("DataManager", "Cleanup cancelled normally")
-            } catch (e: Exception) {
-                Log.e("DataManager", "Error during cleanup", e)
-            } finally {
-                _isSyncing.value = false
+    suspend fun cleanupOnSignOut() = withContext(Dispatchers.IO) {
+        try {
+            when {
+                _isSyncing.value -> delay(1000)
             }
-        }
 
-        // Make sure cleanup job completes or times out
-        scope.launch {
-            try {
-                withTimeout(5000) { // 5 second timeout
-                    cleanupJob.join()
+            currentSyncJob?.cancel()
+            syncJob?.cancel()
+
+            when (auth.currentUser) {
+                null -> {
+                    appDatabase.clearAllTables()
+                    context.getSharedPreferences("YourAppPrefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .clear()
+                        .apply()
                 }
-            } catch (e: Exception) {
-                Log.w("DataManager", "Cleanup job timed out or failed", e)
-                cleanupJob.cancel()
+                else -> { /* No cleanup needed when user exists */ }
             }
+        } catch (e: Exception) {
+            Log.e("DataManager", "Error during cleanup", e)
+        } finally {
+            _isSyncing.value = false
         }
     }
 
@@ -1783,28 +1874,19 @@ class DataManager @Inject constructor(
         }
     }
 
-    fun cleanup() {
-        Log.d("DataManager", "Cleaning up DataManager resources")
-        scope.launch {
-            try {
-                stopPeriodicSync()
-                currentSyncJob?.cancel()
 
-                // Cancel all coroutine jobs
-                scope.coroutineContext.cancelChildren()
-                coroutineScope.coroutineContext.cancelChildren()
-
-                // Finally cancel the scopes themselves
-                scope.cancel()
-                coroutineScope.cancel()
-
-                Log.d("DataManager", "Resources cleaned up successfully")
-            } catch (e: Exception) {
-                Log.e("DataManager", "Error during cleanup", e)
-            }
+    suspend fun cleanup() {
+        withContext(Dispatchers.IO) {
+            stopPeriodicSync()
+            FirebaseAuth.getInstance().signOut()
+            auth.signOut()
+            appDatabase.clearAllTables()
+            context.getSharedPreferences("user_preferences", Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .apply()
         }
     }
-
 
 
 

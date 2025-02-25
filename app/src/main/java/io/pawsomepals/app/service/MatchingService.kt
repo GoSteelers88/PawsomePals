@@ -2,6 +2,7 @@
 package io.pawsomepals.app.service
 
 import io.pawsomepals.app.data.model.Dog
+import io.pawsomepals.app.data.model.DogFriendlyLocation
 import io.pawsomepals.app.data.model.MatchReason
 import io.pawsomepals.app.data.model.MatchReason.AGE_COMPATIBILITY
 import io.pawsomepals.app.data.model.MatchReason.BREED_COMPATIBILITY
@@ -12,18 +13,31 @@ import io.pawsomepals.app.data.model.MatchReason.PLAY_STYLE_MATCH
 import io.pawsomepals.app.data.model.MatchReason.SIZE_COMPATIBILITY
 import io.pawsomepals.app.data.model.MatchReason.TEMPERAMENT_MATCH
 import io.pawsomepals.app.data.model.MatchReason.TRAINING_LEVEL_MATCH
+import io.pawsomepals.app.service.location.LocationMatchingEngine
 import io.pawsomepals.app.service.location.LocationService
+import io.pawsomepals.app.service.matching.MatchPreferences
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import javax.inject.Inject
 import kotlin.math.abs
 
-class MatchingService(
+
+class MatchingService @Inject constructor( // Add @Inject
     private val locationService: LocationService,
+    private val locationMatchingEngine: LocationMatchingEngine, // Add this
+
     private val matchPreferences: MatchPreferences
 ) {
-    companion object {
-        private const val MATCH_THRESHOLD = 0.7
-        const val MAX_DISTANCE = 50.0 // km
-        private const val MIN_COMPATIBILITY_SCORE = 0.4
-    }
+
+
+    data class MatchScore(
+        val baseCompatibility: Double,
+        val locationScore: Double,
+        val distanceKm: Double?,
+        val commonAreas: List<DogFriendlyLocation>,
+        val matchReasons: List<MatchReason>,
+        val warnings: List<String>
+    )
 
     data class MatchResult(
         val isMatch: Boolean,
@@ -33,13 +47,7 @@ class MatchingService(
         val warnings: List<String> = emptyList()
     )
 
-    data class MatchPreferences(
-        val maxDistance: Double = MAX_DISTANCE,
-        val minCompatibilityScore: Double = MIN_COMPATIBILITY_SCORE,
-        val prioritizeEnergy: Boolean = false,
-        val prioritizeAge: Boolean = false,
-        val prioritizeBreed: Boolean = false
-    )
+
 
     private data class CompatibilityDetails(
         val score: Double,
@@ -52,22 +60,84 @@ class MatchingService(
         val weight: Double
     )
 
-    fun calculateMatch(profile1: Dog, profile2: Dog): MatchResult {
-        val compatibilityDetails = getDetailedCompatibility(profile1, profile2)
-        val distance = calculateDistance(profile1, profile2)
+    suspend fun calculateDetailedMatch(dog1: Dog, dog2: Dog): MatchScore {
+        // Get location-based score first
+        val locationScore = locationMatchingEngine.calculateLocationScore(dog1, dog2)
 
+        // Get basic compatibility
+        val compatibilityDetails = getDetailedCompatibility(dog1, dog2)
+
+        // Calculate warnings
         val warnings = mutableListOf<String>()
-        if (profile1.isSpayedNeutered != profile2.isSpayedNeutered) {
+        if (dog1.isSpayedNeutered != dog2.isSpayedNeutered) {
             warnings.add("Different spay/neuter status")
         }
 
-        return MatchResult(
-            isMatch = compatibilityDetails.score >= MATCH_THRESHOLD,
-            compatibilityScore = compatibilityDetails.score,
-            reasons = compatibilityDetails.reasons,
-            distance = distance,
+        // Get common areas
+        val commonAreas = locationMatchingEngine.findCommonAreas(dog1, dog2)
+
+        return MatchScore(
+            baseCompatibility = compatibilityDetails.score,
+            locationScore = locationScore.score,
+            distanceKm = calculateDistance(dog1, dog2),
+            commonAreas = commonAreas,
+            matchReasons = compatibilityDetails.reasons,
             warnings = warnings
         )
+    }
+
+    suspend fun calculateMatch(dog1: Dog, dog2: Dog): MatchResult {
+        val detailedMatch = calculateDetailedMatch(dog1, dog2)
+
+        // Combine scores with weighted importance
+        val combinedScore = (detailedMatch.baseCompatibility * 0.6) +
+                (detailedMatch.locationScore * 0.4)
+
+        return MatchResult(
+            isMatch = combinedScore >= MATCH_THRESHOLD,
+            compatibilityScore = combinedScore,
+            reasons = detailedMatch.matchReasons,
+            distance = detailedMatch.distanceKm,
+            warnings = detailedMatch.warnings
+        )
+    }
+    suspend fun findNearbyMatches(
+        dog: Dog,
+        radius: Double,
+        limit: Int = 20
+    ): Flow<List<Dog>> = flow {
+        try {
+            val nearbyDogs = locationMatchingEngine.findDogsInRadius(
+                latitude = dog.latitude ?: return@flow,
+                longitude = dog.longitude ?: return@flow,
+                radius = radius
+            )
+
+            // Score and sort nearby dogs
+            val scoredDogs = nearbyDogs.mapNotNull { nearbyDog ->
+                try {
+                    val score = calculateDetailedMatch(dog, nearbyDog)
+                    nearbyDog to score
+                } catch (e: Exception) {
+                    null
+                }
+            }.sortedWith(
+                compareByDescending<Pair<Dog, MatchScore>> { it.second.locationScore }
+                    .thenByDescending { it.second.baseCompatibility }
+            )
+
+            emit(scoredDogs.take(limit).map { it.first })
+        } catch (e: Exception) {
+            emit(emptyList())
+        }
+    }
+    suspend fun calculateBatchMatches(
+        targetDog: Dog,
+        candidates: List<Dog>
+    ): List<Pair<Dog, MatchScore>> {
+        return candidates.map { candidate ->
+            candidate to calculateDetailedMatch(targetDog, candidate)
+        }.sortedByDescending { it.second.baseCompatibility }
     }
 
     private fun getDetailedCompatibility(profile1: Dog, profile2: Dog): CompatibilityDetails {
@@ -259,14 +329,17 @@ class MatchingService(
     }
 
     private fun getLocationCompatibility(profile1: Dog, profile2: Dog): Double {
-        val distance = calculateDistance(profile1, profile2)
-        return when {
-            distance == null -> 0.0
-            distance <= matchPreferences.maxDistance * 0.3 -> 1.0
-            distance <= matchPreferences.maxDistance * 0.6 -> 0.7
-            distance <= matchPreferences.maxDistance -> 0.4
-            else -> 0.0
-        }
+        return locationMatchingEngine.calculateLocationScore(profile1, profile2).score
+    }
+
+    companion object {
+        private const val MATCH_THRESHOLD = 0.7
+        const val MAX_DISTANCE = 50.0 // km
+        private const val MIN_COMPATIBILITY_SCORE = 0.4
+
+        // Add new constants for location weights
+        const val LOCATION_WEIGHT = 0.4
+        const val COMPATIBILITY_WEIGHT = 0.6
     }
 
     private fun getSizeCompatibility(size1: String?, size2: String?): Double {
@@ -332,13 +405,11 @@ class MatchingService(
         } else null
     }
 
-    fun isMatch(dog1: Dog, dog2: Dog): Boolean {
-        val result = calculateMatch(dog1, dog2)
-        return result.isMatch
+    suspend fun isMatch(dog1: Dog, dog2: Dog): Boolean {
+        return calculateMatch(dog1, dog2).isMatch
     }
 
-    fun getCompatibilityScore(dog1: Dog, dog2: Dog): Double {
-        val result = calculateMatch(dog1, dog2)
-        return result.compatibilityScore
+    suspend fun getCompatibilityScore(dog1: Dog, dog2: Dog): Double {
+        return calculateMatch(dog1, dog2).compatibilityScore
     }
 }

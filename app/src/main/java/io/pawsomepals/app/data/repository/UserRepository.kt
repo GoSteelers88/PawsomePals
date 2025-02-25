@@ -2,15 +2,21 @@ package io.pawsomepals.app.data.repository
 
 import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.firestore.FirebaseFirestore
 import io.pawsomepals.app.data.dao.DogDao
 import io.pawsomepals.app.data.dao.UserDao
 import io.pawsomepals.app.data.model.Dog
 import io.pawsomepals.app.data.model.DogProfile
 import io.pawsomepals.app.data.model.User
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
@@ -28,22 +34,171 @@ class UserRepository(
 ) {
     private var currentUser: User? = null
 
-    suspend fun getCurrentUser(): User? {
-        return currentUser ?: userDao.getLastLoggedInUser()?.also { currentUser = it }
+
+    private val _currentUserFlow = MutableStateFlow<User?>(null)
+    val currentUserFlow: StateFlow<User?> = _currentUserFlow.asStateFlow()
+
+    init {
+        // Set up auth state listener
+        auth.addAuthStateListener { firebaseAuth ->
+            val firebaseUser = firebaseAuth.currentUser
+            CoroutineScope(Dispatchers.IO).launch {
+                if (firebaseUser != null) {
+                    refreshCurrentUser()
+                } else {
+                    _currentUserFlow.value = null
+                    currentUser = null
+                }
+            }
+        }
+    }
+    private suspend fun refreshCurrentUser() {
+        withContext(Dispatchers.IO) {
+            val firebaseUser = auth.currentUser ?: return@withContext
+
+            try {
+                // Try local DB first
+                var user = userDao.getUserById(firebaseUser.uid)
+
+                // If not in local DB, try Firestore
+                if (user == null) {
+                    user = firestore.collection("users")
+                        .document(firebaseUser.uid)
+                        .get()
+                        .await()
+                        .toObject(User::class.java)
+                        ?.also {
+                            userDao.insertUser(it)
+                        }
+                }
+
+                currentUser = user
+                _currentUserFlow.value = user
+            } catch (e: Exception) {
+                Log.e("UserRepository", "Error refreshing current user", e)
+            }
+        }
     }
 
     fun getUserProfile(userId: String): Flow<User?> = flow {
         emit(getUserById(userId))
     }
 
-    fun getCurrentUserId(): String? {
-        return currentUser?.id
+    suspend fun getCurrentUser(): User? {
+        return withContext(Dispatchers.IO) {
+            currentUser?.let { return@withContext it }
+
+            val firebaseUser = auth.currentUser ?: return@withContext null
+
+            // Try to get from local DB first
+            var user = userDao.getUserById(firebaseUser.uid)
+
+            // If not in local DB, try Firestore
+            if (user == null) {
+                user = firestore.collection("users")
+                    .document(firebaseUser.uid)
+                    .get()
+                    .await()
+                    .toObject(User::class.java)
+                    ?.also {
+                        userDao.insertUser(it)
+                    }
+            }
+
+            // Update current user and flow
+            currentUser = user
+            _currentUserFlow.value = user
+
+            user
+        }
     }
 
     suspend fun insertUser(user: User) {
         withContext(Dispatchers.IO) {
-            userDao.insertUser(user)
-            firestore.collection("users").document(user.id).set(user).await()
+            try {
+                // Enhanced validation
+                if (user.id.isBlank()) {
+                    Log.e("UserRepository", "Attempted to insert user with blank ID")
+                    throw IllegalArgumentException("User ID cannot be blank")
+                }
+
+                // Insert into local DB first
+                userDao.insertUser(user)
+
+                // Then update Firestore
+                firestore.collection("users")
+                    .document(user.id)
+                    .set(user)
+                    .await()
+
+                Log.d("UserRepository", "User inserted successfully: ${user.id}")
+            } catch (e: Exception) {
+                Log.e("UserRepository", "Error inserting user", e)
+                throw e
+            }
+        }
+    }
+    suspend fun createUser(firebaseUser: FirebaseUser): Result<User> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val userRef = firestore.collection("users").document(firebaseUser.uid)
+                val snapshot = userRef.get().await()
+
+                val user = if (!snapshot.exists()) {
+                    // Generate a unique username based on display name or email
+                    val baseUsername = (firebaseUser.displayName
+                        ?: firebaseUser.email?.substringBefore("@")
+                        ?: "user").toLowerCase()
+                    var uniqueUsername = baseUsername
+                    var counter = 1
+
+                    // Keep trying until we find a unique username
+                    while (!isUsernameAvailable(uniqueUsername)) {
+                        uniqueUsername = "${baseUsername}${counter++}"
+                    }
+
+                    val newUser = User(
+                        id = firebaseUser.uid,
+                        email = firebaseUser.email ?: "",
+                        username = uniqueUsername,
+                        lastLoginTime = System.currentTimeMillis()
+                    )
+                    userRef.set(newUser).await()
+                    userDao.insertUser(newUser)
+                    newUser
+                } else {
+                    val existingUser = snapshot.toObject(User::class.java)!!
+                    userDao.insertUser(existingUser)
+                    existingUser
+                }
+                Result.success(user)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
+    suspend fun updateUserQuestionnaireStatus(userId: String, completed: Boolean) {
+        withContext(Dispatchers.IO) {
+            try {
+                val user = getUserById(userId) ?: return@withContext
+                val updatedUser = user.copy(hasCompletedQuestionnaire = completed)
+                updateUser(updatedUser)
+            } catch (e: Exception) {
+                Log.e("UserRepository", "Error updating questionnaire status", e)
+                throw e
+            }
+        }
+    }
+    suspend fun updateUserTermsStatus(userId: String, accepted: Boolean) {
+        withContext(Dispatchers.IO) {
+            try {
+                val user = getUserById(userId) ?: return@withContext
+                val updatedUser = user.copy(hasAcceptedTerms = accepted)
+                updateUser(updatedUser)
+            } catch (e: Exception) {
+                Log.e("UserRepository", "Error updating terms status", e)
+                throw e
+            }
         }
     }
     suspend fun getCurrentUserActiveDog(): Dog? {
@@ -56,6 +211,8 @@ class UserRepository(
             } ?: getDogProfileByOwnerId(user.id) // Fallback to owner ID lookup
         }
     }
+
+
 
     suspend fun getDogForChat(chatId: String): Dog? {
         return withContext(Dispatchers.IO) {
@@ -82,7 +239,6 @@ class UserRepository(
             chatDogs.find { it.ownerId == user.id }
         }
     }
-
 
     suspend fun getDogProfileByOwnerId(ownerId: String): Dog? {
         return withContext(Dispatchers.IO) {
@@ -132,25 +288,8 @@ class UserRepository(
             }
         }
     }
-    suspend fun isUserLoggedIn(): Boolean {
-        return auth.currentUser != null
-    }
 
-    fun signInWithEmailAndPassword(email: String, password: String) {
-        Log.d("FirebaseAuth", "Attempting to sign in with email: $email")
-        FirebaseAuth.getInstance().signInWithEmailAndPassword(email, password)
-            .addOnCompleteListener { task ->
-                if (task.isSuccessful) {
-                    Log.d("FirebaseAuth", "signInWithEmail:success")
-                    // Handle successful login
-                } else {
-                    Log.e("FirebaseAuth", "signInWithEmail:failure", task.exception)
-                    // Handle failed login
-                    val errorMessage = task.exception?.message ?: "Unknown error occurred"
-                    Log.e("FirebaseAuth", "Error details: $errorMessage")
-                }
-            }
-    }
+
 
     suspend fun getNextDogProfile(): Dog? {
         return withContext(Dispatchers.IO) {
@@ -159,35 +298,7 @@ class UserRepository(
         }
     }
 
-    suspend fun loginUser(email: String, password: String): User? {
-        return withContext(Dispatchers.IO) {
-            val localUser = userDao.getUserByEmail(email)
-            val firebaseUser = firestore.collection("users")
-                .whereEqualTo("email", email)
-                .get()
-                .await()
-                .documents
-                .firstOrNull()
-                ?.toObject(User::class.java)
 
-            when {
-                firebaseUser != null && firebaseUser.password == password -> {
-                    if (localUser == null || localUser != firebaseUser) {
-                        userDao.insertUser(firebaseUser)
-                    }
-                    currentUser = firebaseUser
-                    firebaseUser
-                }
-                localUser != null && localUser.password == password -> {
-                    currentUser = localUser
-                    // Sync local user to Firestore
-                    firestore.collection("users").document(localUser.id).set(localUser).await()
-                    localUser
-                }
-                else -> null
-            }
-        }
-    }
 
     suspend fun userExists(email: String): Boolean {
         return withContext(Dispatchers.IO) {
@@ -205,7 +316,99 @@ class UserRepository(
 
     suspend fun getUserById(id: String): User? {
         return withContext(Dispatchers.IO) {
-            userDao.getUserById(id)
+            try {
+                // Try local DB first
+                var user = userDao.getUserById(id)
+
+                // If not in local DB, try Firestore
+                if (user == null) {
+                    Log.d("UserRepository", "User $id not found in local DB, checking Firestore")
+                    user = firestore.collection("users")
+                        .document(id)
+                        .get()
+                        .await()
+                        .toObject(User::class.java)
+                        ?.also {
+                            // Cache in local DB
+                            userDao.insertUser(it)
+                            Log.d("UserRepository", "Cached user $id from Firestore to local DB")
+                        }
+                }
+
+                if (user == null) {
+                    Log.d("UserRepository", "User $id not found in either local DB or Firestore")
+                }
+
+                user
+            } catch (e: Exception) {
+                Log.e("UserRepository", "Error getting user $id", e)
+                null
+            }
+        }
+    }
+    suspend fun updateUsername(userId: String, newUsername: String): Result<Unit> {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (!isValidUsername(newUsername)) {
+                    return@withContext Result.failure(IllegalArgumentException("Invalid username format"))
+                }
+
+                if (!isUsernameAvailable(newUsername)) {
+                    return@withContext Result.failure(IllegalArgumentException("Username already taken"))
+                }
+
+                val user = getUserById(userId) ?: return@withContext Result.failure(
+                    IllegalStateException("User not found")
+                )
+
+                val updatedUser = user.copy(username = newUsername)
+                updateUser(updatedUser)
+
+                Result.success(Unit)
+            } catch (e: Exception) {
+                Log.e("UserRepository", "Error updating username", e)
+                Result.failure(e)
+            }
+        }
+    }
+    fun isValidUsername(username: String): Boolean {
+        // Username requirements:
+        // - 3-30 characters
+        // - Only letters, numbers, and underscores
+        // - Must start with a letter
+        val usernamePattern = "^[a-zA-Z][a-zA-Z0-9_]{2,29}$"
+        return username.matches(usernamePattern.toRegex())
+    }
+    suspend fun searchByUsername(prefix: String, limit: Int = 10): List<User> {
+        return withContext(Dispatchers.IO) {
+            try {
+                firestore.collection("users")
+                    .orderBy("username")
+                    .startAt(prefix)
+                    .endAt(prefix + '\uf8ff')
+                    .limit(limit.toLong())
+                    .get()
+                    .await()
+                    .toObjects(User::class.java)
+            } catch (e: Exception) {
+                Log.e("UserRepository", "Error searching usernames", e)
+                emptyList()
+            }
+        }
+    }
+    suspend fun isUsernameAvailable(username: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val snapshot = firestore.collection("users")
+                    .whereEqualTo("username", username)
+                    .get()
+                    .await()
+
+                snapshot.isEmpty
+            } catch (e: Exception) {
+                Log.e("UserRepository", "Error checking username availability", e)
+                throw e
+            }
         }
     }
 
@@ -215,37 +418,7 @@ class UserRepository(
         }
     }
 
-    suspend fun registerUser(username: String, email: String, password: String, petName: String?) {
-        withContext(Dispatchers.IO) {
-            val userId = UUID.randomUUID().toString()
-            // Create user without petName
-            val user = User(
-                id = userId,
-                username = username,
-                email = email,
-                password = password,
-                dogIds = emptyList(),  // Initialize empty dog list
-                hasAcceptedTerms = false,
-                hasCompletedQuestionnaire = false
-            )
-            insertUser(user)
 
-            // If petName provided, create initial dog and update user's dogIds
-            if (!petName.isNullOrBlank()) {
-                val dogId = UUID.randomUUID().toString()
-                val dog = Dog(
-                    id = dogId,
-                    ownerId = userId,
-                    name = petName
-                )
-                insertDog(dog)
-
-                // Update user with new dogId
-                val updatedUser = user.copy(dogIds = listOf(dogId))
-                updateUser(updatedUser)
-            }
-        }
-    }
     suspend fun addDogToUser(userId: String, dogId: String) {
         withContext(Dispatchers.IO) {
             val user = getUserById(userId) ?: return@withContext
@@ -259,17 +432,65 @@ class UserRepository(
 
     suspend fun updateUser(user: User) {
         withContext(Dispatchers.IO) {
-            userDao.updateUser(user)
-            firestore.collection("users").document(user.id).set(user).await()
-            if (user.id == currentUser?.id) {
-                currentUser = user
+            try {
+                if (user.id.isBlank()) {
+                    throw IllegalArgumentException("User ID cannot be blank")
+                }
+
+                // Update Firestore
+                firestore.collection("users")
+                    .document(user.id)
+                    .set(user)
+                    .await()
+
+                // Update local DB
+                userDao.updateUser(user)
+
+                // Update current user if needed
+                if (user.id == currentUser?.id) {
+                    currentUser = user
+                    _currentUserFlow.value = user
+                }
+
+                Log.d("UserRepository", "User updated successfully")
+            } catch (e: Exception) {
+                Log.e("UserRepository", "Error updating user", e)
+                throw e
             }
         }
     }
+    fun isUserSignedIn(): Boolean {
+        return auth.currentUser != null
+    }
+
+    fun getCurrentUserFlow(): Flow<User?> = currentUserFlow
+
+
+
+
+    fun isUserSetupComplete(): Flow<Boolean> = flow {
+        withContext(Dispatchers.IO) {
+            try {
+                val user = getCurrentUser()
+                if (user != null) {
+                    emit(user.hasAcceptedTerms && user.hasCompletedQuestionnaire)
+                } else {
+                    emit(false)
+                }
+            } catch (e: Exception) {
+                Log.e("UserRepository", "Error checking user setup status", e)
+                emit(false)
+            }
+        }
+    }
+
     suspend fun isUserSetupComplete(userId: String): Boolean {
-        return withContext(Dispatchers.IO) {
+        return try {
             val user = getUserById(userId)
-            user?.hasAcceptedTerms == true && user.hasCompletedQuestionnaire == true
+            user?.let { it.hasAcceptedTerms && it.hasCompletedQuestionnaire } ?: false
+        } catch (e: Exception) {
+            Log.e("UserRepository", "Error checking user setup status", e)
+            false
         }
     }
 
@@ -291,6 +512,8 @@ class UserRepository(
         return UUID.randomUUID().toString()
     }
 
+
+
     fun dogToDogProfile(dog: Dog): DogProfile {
         return DogProfile(
             id = dog.id,
@@ -302,7 +525,7 @@ class UserRepository(
             size = dog.size,
             energyLevel = dog.energyLevel,
             friendliness = dog.friendliness,
-            isSpayedNeutered = dog.isSpayedNeutered?.toBoolean(),
+            isSpayedNeutered = dog.isSpayedNeutered,  // Fixed: directly use the Boolean value
             friendlyWithDogs = dog.friendlyWithDogs,
             friendlyWithChildren = dog.friendlyWithChildren,
             specialNeeds = dog.specialNeeds,
@@ -318,6 +541,7 @@ class UserRepository(
         )
     }
 
+    // In UserRepository.kt, update the dogProfileToDog function:
     fun dogProfileToDog(dogProfile: DogProfile): Dog {
         return Dog(
             id = dogProfile.id,
@@ -329,18 +553,26 @@ class UserRepository(
             size = dogProfile.size,
             energyLevel = dogProfile.energyLevel,
             friendliness = dogProfile.friendliness,
-            isSpayedNeutered = dogProfile.isSpayedNeutered?.toString(),
+            profilePictureUrl = dogProfile.profilePictureUrl,
+            isSpayedNeutered = dogProfile.isSpayedNeutered ?: false,
             friendlyWithDogs = dogProfile.friendlyWithDogs,
             friendlyWithChildren = dogProfile.friendlyWithChildren,
+            friendlyWithStrangers = null,
             specialNeeds = dogProfile.specialNeeds,
             favoriteToy = dogProfile.favoriteToy,
             preferredActivities = dogProfile.preferredActivities,
             walkFrequency = dogProfile.walkFrequency,
             favoriteTreat = dogProfile.favoriteTreat,
             trainingCertifications = dogProfile.trainingCertifications,
-            profilePictureUrl = dogProfile.profilePictureUrl,
+            trainability = null,
+            exerciseNeeds = null,
+            groomingNeeds = null,
+            weight = null,
             latitude = dogProfile.latitude,
-            longitude = dogProfile.longitude
+            longitude = dogProfile.longitude,
+            profileComplete = false,
+            photoUrls = List(6) { null },
+            achievements = emptyList()
         )
     }
 
@@ -393,13 +625,13 @@ class UserRepository(
             }
         }
     }
+    // In UserRepository.kt
 
-    suspend fun updateUserQuestionnaireStatus(userId: String, completed: Boolean) {
-        withContext(Dispatchers.IO) {
-            userDao.updateUserQuestionnaireStatus(userId, completed)
-            firestore.collection("users").document(userId).update("hasCompletedQuestionnaire", completed).await()
-        }
-    }
+
+    fun getCurrentUserId(): String? = auth.currentUser?.uid
+
+
+
 
     suspend fun getCurrentUserDog(): Dog? {
         return withContext(Dispatchers.IO) {
@@ -409,8 +641,24 @@ class UserRepository(
         }
     }
 
-    suspend fun logout() {
-        currentUser = null
-        // You might want to clear any session data or update last logged in time here
+    suspend fun getUserState(userId: String): UserState {
+        return withContext(Dispatchers.IO) {
+            val user = getUserById(userId)
+            when {
+                user == null -> UserState.NOT_FOUND
+                !user.hasAcceptedTerms -> UserState.NEEDS_TERMS
+                !user.hasCompletedQuestionnaire -> UserState.NEEDS_QUESTIONNAIRE
+                else -> UserState.COMPLETE
+            }
+        }
+    }
+
+
+
+    enum class UserState {
+        NOT_FOUND,
+        NEEDS_TERMS,
+        NEEDS_QUESTIONNAIRE,
+        COMPLETE
     }
 }

@@ -1,10 +1,17 @@
 package io.pawsomepals.app.data.repository
 
 import android.util.Log
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ktx.toObjects
+import com.google.gson.Gson
+import io.pawsomepals.app.data.dao.DogDao
+import io.pawsomepals.app.data.dao.UserDao
 import io.pawsomepals.app.data.model.Dog
 import io.pawsomepals.app.utils.DogIdGenerator
-import com.google.firebase.firestore.FirebaseFirestore
-import com.google.gson.Gson
+import io.pawsomepals.app.utils.GeoFireUtils
+import io.pawsomepals.app.utils.GeoLocation
+import io.pawsomepals.app.utils.Location
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
@@ -14,7 +21,10 @@ import javax.inject.Singleton
 
 @Singleton
 class DogProfileRepository @Inject constructor(
+    private val userDao: UserDao,
+    private val dogDao: DogDao,
     private val firestore: FirebaseFirestore,
+    private val auth: FirebaseAuth,
     private val userRepository: UserRepository
 ) {
     companion object {
@@ -212,65 +222,119 @@ class DogProfileRepository @Inject constructor(
     }
     suspend fun getDogById(dogId: String): Result<Dog> {
         return try {
+            Log.d(TAG, "🔍 Fetching dog by ID: $dogId")
             val snapshot = dogProfilesCollection.document(dogId).get().await()
             val dog = snapshot.toObject(Dog::class.java)
             if (dog != null) {
+                Log.d(TAG, "✅ Successfully retrieved dog: ${dog.id}, name: ${dog.name}")
                 Result.success(dog)
             } else {
+                Log.e(TAG, "❌ Dog not found for ID: $dogId")
                 Result.failure(NoSuchElementException("Dog not found"))
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting dog by ID: $dogId", e)
+            Log.e(TAG, "❌ Error getting dog by ID: $dogId", e)
             Result.failure(e)
         }
     }
 
-    suspend fun getSwipingProfiles(batchSize: Int = 20): Result<List<Dog>> {
+    suspend fun getDogsByLocation(
+        latitude: Double,
+        longitude: Double,
+        radius: Double
+    ): Result<List<Dog>> {
         return try {
-            val currentUserId = userRepository.getCurrentUserId()
-                ?: throw IllegalStateException("No current user")
+            Log.d(TAG, "🔍 Starting location query: lat=$latitude, lng=$longitude, radius=$radius")
 
-            val snapshot = dogProfilesCollection
-                .whereNotEqualTo("ownerId", currentUserId)
-                .limit(batchSize.toLong())  // Add limit
-                .get()
-                .await()
+            val geoHash = GeoFireUtils.getGeoHashForLocation(
+                GeoLocation(latitude, longitude)
+            )
+            Log.d(TAG, "📍 Generated geoHash: $geoHash")
 
-            val allDogs = snapshot.toObjects(Dog::class.java)
-            val filteredDogs = allDogs.filter { dog ->
-                !hasBeenSwiped(currentUserId, dog.id).getOrNull()!! ?: false
+            val bounds = GeoFireUtils.getGeoHashQueryBounds(
+                GeoLocation(latitude, longitude),
+                radius * 1000
+            )
+            Log.d(TAG, "🗺️ Got ${bounds.size} query bounds")
+
+            val tasks = bounds.map { bound ->
+                dogProfilesCollection
+                    .orderBy("geoHash")
+                    .startAt(bound.startHash)
+                    .endAt(bound.endHash)
+                    .get()
             }
 
-            Log.d(TAG, "Retrieved ${filteredDogs.size} dogs for swiping")
-            Result.success(filteredDogs)
+            val results = tasks.map { it.await() }
+            val matchingDogs = results.flatMap { snapshot ->
+                snapshot.documents.mapNotNull { doc ->
+                    val dog = doc.toObject(Dog::class.java)
+                    if (dog?.latitude != null && dog.longitude != null) {
+                        val distance = GeoFireUtils.getDistanceBetween(
+                            GeoLocation(latitude, longitude),
+                            GeoLocation(dog.latitude!!, dog.longitude!!)
+                        )
+
+                        if (distance <= radius * 1000) {
+                            Log.d(TAG, "✅ Found matching dog within radius: ${dog.id}, name: ${dog.name}, distance: ${distance/1000}km")
+                            dog
+                        } else {
+                            Log.d(TAG, "⚠️ Dog outside radius: ${dog.id}, distance: ${distance/1000}km")
+                            null
+                        }
+                    } else {
+                        Log.w(TAG, "⚠️ Dog missing location data: ${dog?.id}")
+                        null
+                    }
+                }
+            }
+
+            Log.d(TAG, "📊 Found total ${matchingDogs.size} dogs within radius")
+            Result.success(matchingDogs)
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting swiping profiles", e)
+            Log.e(TAG, "❌ Error getting dogs by location", e)
             Result.failure(e)
         }
     }
-
-    private suspend fun hasBeenSwiped(userId: String, profileId: String): Result<Boolean> {
+    // Modify existing getSwipingProfiles to include location
+    suspend fun getSwipingProfiles(
+        batchSize: Int = 20,
+        location: Location? = null,
+        radius: Double = 50.0
+    ): Result<List<Dog>> {
         return try {
-            val likeSnapshot = firestore.collection(COLLECTION_LIKES)
-                .document(userId)
-                .collection(SUBCOLLECTION_LIKED_PROFILES)
-                .document(profileId)
-                .get()
+            val currentUserId = auth.currentUser?.uid
+            Log.d(TAG, "Getting swiping profiles for user: $currentUserId")
+
+            if (currentUserId == null) {
+                Log.d(TAG, "No authenticated user found")
+                return Result.success(emptyList())
+            }
+
+            // If location is available, use location-based query
+            if (location != null) {
+                Log.d(TAG, "Using location-based query: lat=${location.latitude}, lng=${location.longitude}")
+                return getDogsByLocation(location.latitude, location.longitude, radius)
+            }
+
+            Log.d(TAG, "Using regular query")
+            // Fallback to regular query if no location
+            val snapshot = dogProfilesCollection
+                .whereNotEqualTo("ownerId", currentUserId)
+                .limit(batchSize.toLong())
+                .get()  // Remove Source.SERVER
                 .await()
 
-            val dislikeSnapshot = firestore.collection(COLLECTION_DISLIKES)
-                .document(userId)
-                .collection(SUBCOLLECTION_DISLIKED_PROFILES)
-                .document(profileId)
-                .get()
-                .await()
-
-            Result.success(likeSnapshot.exists() || dislikeSnapshot.exists())
+            val dogs = snapshot.toObjects<Dog>()
+            Log.d(TAG, "Found ${dogs.size} dogs, ids: ${dogs.map { it.id }}")
+            Result.success(dogs)
         } catch (e: Exception) {
-            Log.e(TAG, "Error checking swipe status for profile: $profileId", e)
+            Log.e(TAG, "Failed to get swiping profiles", e)
             Result.failure(e)
         }
     }
+
+
 
     suspend fun searchDogProfiles(query: String): Result<List<Dog>> {
         return try {
@@ -291,6 +355,7 @@ class DogProfileRepository @Inject constructor(
 
     suspend fun getCurrentUserDogProfile(userId: String): Result<Dog?> {
         return try {
+            Log.d(TAG, "🔍 Fetching current user's dog profile for userId: $userId")
             val snapshot = dogProfilesCollection
                 .whereEqualTo("ownerId", userId)
                 .limit(1)
@@ -298,10 +363,14 @@ class DogProfileRepository @Inject constructor(
                 .await()
 
             val dog = snapshot.documents.firstOrNull()?.toObject(Dog::class.java)
-            Log.d(TAG, "Retrieved current user's dog profile: ${dog?.id}")
+            if (dog != null) {
+                Log.d(TAG, "✅ Found current user's dog: ${dog.id}, name: ${dog.name}")
+            } else {
+                Log.w(TAG, "⚠️ No dog profile found for user: $userId")
+            }
             Result.success(dog)
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting current user's dog profile", e)
+            Log.e(TAG, "❌ Error getting current user's dog profile", e)
             Result.failure(e)
         }
     }

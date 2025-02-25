@@ -5,6 +5,10 @@ import android.util.Log
 import com.google.android.libraries.places.api.Places
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.pawsomepals.app.utils.RemoteConfigManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -13,42 +17,75 @@ class PlacesInitializer @Inject constructor(
     @ApplicationContext private val context: Context,
     private val remoteConfigManager: RemoteConfigManager
 ) {
-    companion object {
-        private const val TAG = "PlacesInitializer"
-    }
+    private val initializationMutex = Mutex()
+    private var isInitialized = false
 
-    fun initializePlaces() {
-        try {
-            if (!Places.isInitialized()) {
-                val apiKey = remoteConfigManager.getMapsKey()
-                if (apiKey.isNotBlank()) {
-                    Places.initialize(context, apiKey)
-                    Log.d(TAG, "Places API initialized successfully")
-                } else {
-                    throw IllegalStateException("Maps API key is blank")
-                }
-            } else {
-                Log.d(TAG, "Places API already initialized")
+    suspend fun ensureInitialized(): Boolean = withContext(Dispatchers.IO) {
+        initializationMutex.withLock {
+            if (isInitialized && Places.isInitialized()) {
+                return@withContext true
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize Places API", e)
-            throw e // Rethrow to be handled by the application
+
+            try {
+                if (Places.isInitialized()) {
+                    Places.deinitialize()
+                }
+
+                val apiKey = remoteConfigManager.getMapsKey()
+                Log.d(TAG, "Initializing Places with key length: ${apiKey.length}")
+
+                Places.initialize(context.applicationContext, apiKey)
+
+                // Verify initialization
+                if (!Places.isInitialized()) {
+                    throw IllegalStateException("Places failed to initialize")
+                }
+
+                isInitialized = true
+                Log.d(TAG, "Places SDK initialized successfully")
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "Places initialization failed", e)
+                isInitialized = false
+                throw e
+            }
         }
     }
 
     fun isPlacesInitialized(): Boolean {
-        return Places.isInitialized()
+        return isInitialized && Places.isInitialized()
     }
 
-    fun reinitializePlaces() {
-        try {
-            // Force re-initialization with new key
-            val apiKey = remoteConfigManager.getMapsKey()
-            Places.initialize(context, apiKey)
-            Log.d(TAG, "Places API re-initialized successfully")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to re-initialize Places API", e)
-            throw e
+    suspend fun reinitializePlaces() = withContext(Dispatchers.IO) {
+        initializationMutex.withLock {
+            try {
+                val apiKey = remoteConfigManager.getMapsKey()
+
+                if (apiKey.isBlank() || !apiKey.startsWith("AIza")) {
+                    throw IllegalStateException("Invalid API key format")
+                }
+
+                if (Places.isInitialized()) {
+                    Places.deinitialize()
+                }
+
+                Places.initialize(context.applicationContext, apiKey)
+
+                if (!Places.isInitialized()) {
+                    throw IllegalStateException("Places reinitialization failed")
+                }
+
+                isInitialized = true
+                Log.d(TAG, "Places API re-initialized successfully")
+            } catch (e: Exception) {
+                isInitialized = false
+                Log.e(TAG, "Failed to re-initialize Places API", e)
+                throw e
+            }
         }
+    }
+
+    companion object {
+        private const val TAG = "PlacesInitializer"
     }
 }

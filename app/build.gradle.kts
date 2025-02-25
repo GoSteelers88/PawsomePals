@@ -16,12 +16,43 @@ android {
         applicationId = "io.pawsomepals.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 3
+        versionCode = 13
         versionName = "2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
+            buildConfigField(
+                "String",
+                "DEFAULT_MAPS_API_KEY",
+                "\"AIzaSyAj_zBLXw67-FvMTCRcwXCeukgtrCZbcyk\""
+            )
+            buildConfigField(
+                "String",
+                "DEFAULT_GOOGLE_SIGN_IN_KEY",
+                "\"455388576182-nb7hkru3benl1qe38epcccjd0kurebtl.apps.googleusercontent.com\""
+            )
+            buildConfigField(
+                "String",
+                "DEFAULT_RECAPTCHA_KEY",
+                "\"6Lc3MYIqAAAAAEgk69-5Kl5vA7Zz-rnO9SJJkUPC\""
+            )
+            buildConfigField("String", "DEFAULT_FACEBOOK_APP_ID", "\"527141699750137\"")
+            buildConfigField(
+                "String",
+                "DEFAULT_FACEBOOK_TOKEN",
+                "\"5f8a74941436f7da5230b70876731479\""
+            )
+            buildConfigField(
+                "String",
+                "DEFAULT_OPENAI_KEY",
+                "\"sk-OBO10XT3CzWpM-ulVeVmWU-EMVnO5wx2jb1IcmZf2bT3BlbkFJA49zMWGgDY559Dd3mdPNBiM-47ilg5NvqnGJOpZQUA\""
+            )
+            buildConfigField("String", "DEFAULT_WEATHER_KEY", "\"aa553d06e53c43aea30171022240810\"")
+
+            vectorDrawables {
+                useSupportLibrary = true
+            }
         }
 
         javaCompileOptions {
@@ -159,6 +190,9 @@ dependencies {
 
     // Coroutines Play Services
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
+    implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+
 
     // Navigation
     implementation(libs.androidx.navigation.compose)
@@ -194,6 +228,8 @@ dependencies {
     implementation("com.google.firebase:firebase-appcheck-ktx")
     implementation("com.google.firebase:firebase-crashlytics-ktx")
     implementation("com.google.firebase:firebase-config-ktx")
+    implementation("com.firebase:geofire-android-common:3.2.0")
+
 
     // Google Services
     implementation(libs.play.services.auth.v2070)
@@ -216,6 +252,7 @@ dependencies {
 
     // Coroutines
     implementation(libs.kotlinx.coroutines.android.v164)
+    implementation(libs.androidx.lifecycle.runtime.ktx.v287)
 
     // Image Loading
     implementation(libs.coil.compose)
@@ -229,7 +266,10 @@ dependencies {
     implementation(libs.androidx.media3.common)
 
     // Camera
-    implementation(libs.androidx.camera.core)
+    val cameraxVersion = "1.3.0"
+    implementation("androidx.camera:camera-camera2:$cameraxVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
+    implementation("androidx.camera:camera-view:$cameraxVersion")
 
     // Background Processing
     implementation(libs.androidx.work.runtime.ktx)

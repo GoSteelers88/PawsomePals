@@ -2,6 +2,7 @@ package io.pawsomepals.app.ui.screens.playdate.components
 
 
 import android.os.Build
+import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -46,199 +47,227 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import io.pawsomepals.app.data.model.DogFriendlyLocation
 import io.pawsomepals.app.data.model.Match
 import io.pawsomepals.app.data.model.PlaydateRequest
-import io.pawsomepals.app.data.model.RequestStatus
 import io.pawsomepals.app.ui.components.DateTimePicker
 import io.pawsomepals.app.ui.screens.location.LocationPickerScreen
 import java.time.LocalDateTime
-import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
-import java.util.UUID
 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun UpcomingTab(
-    currentMatch: Match.MatchWithDetails,
+    currentMatch: Match.MatchWithDetails?,
     onDismiss: () -> Unit,
     onSchedule: (PlaydateRequest) -> Unit,
 ) {
-    var currentStep by remember { mutableStateOf(SchedulingStep.LOCATION) }
-    var selectedLocation by remember { mutableStateOf<DogFriendlyLocation?>(null) }
-    var selectedDateTime by remember { mutableStateOf<LocalDateTime?>(null) }
-    var showReviewDialog by remember { mutableStateOf(false) }
+    currentMatch?.let { match ->
+        Log.d("UpcomingTab", "Initializing with match: ${match.match.id}, otherDog: ${match.otherDog.name}")
 
-    ModalBottomSheet(
-        onDismissRequest = {
-            selectedLocation = null
-            selectedDateTime = null
-            onDismiss()
-        },
-        sheetState = rememberModalBottomSheetState(),
-        modifier = Modifier.fillMaxHeight(0.9f)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
+        var currentStep by remember { mutableStateOf(SchedulingStep.LOCATION) }
+        var selectedLocation by remember { mutableStateOf<DogFriendlyLocation?>(null) }
+        var selectedDateTime by remember { mutableStateOf<LocalDateTime?>(null) }
+        var showReviewDialog by remember { mutableStateOf(false) }
+
+        Log.d("UpcomingTab", """State:
+            |Step: $currentStep
+            |Location: ${selectedLocation?.name ?: "null"}
+            |DateTime: $selectedDateTime
+            |ShowReview: $showReviewDialog""".trimMargin())
+
+        ModalBottomSheet(
+            onDismissRequest = {
+                Log.d("UpcomingTab", "Bottom sheet dismissed")
+                selectedLocation = null
+                selectedDateTime = null
+                onDismiss()
+            },
+            sheetState = rememberModalBottomSheetState(),
+            modifier = Modifier.fillMaxHeight(0.9f)
         ) {
-            // Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
             ) {
-                Text(
-                    text = "Schedule Playdate",
-                    style = MaterialTheme.typography.titleLarge
-                )
-                IconButton(onClick = onDismiss) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Close"
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Schedule Playdate",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close"
+                        )
+                    }
+                }
+
+                // Progress Steps
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 24.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ProgressStep(
+                        icon = Icons.Default.LocationOn,
+                        label = "Location",
+                        isActive = currentStep == SchedulingStep.LOCATION,
+                        isCompleted = selectedLocation != null
+                    )
+                    Spacer(modifier = Modifier.width(48.dp))
+                    ProgressStep(
+                        icon = Icons.Default.CalendarToday,
+                        label = "Schedule",
+                        isActive = currentStep == SchedulingStep.DATE,
+                        isCompleted = selectedDateTime != null
                     )
                 }
-            }
 
-            // Progress Steps
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 24.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                ProgressStep(
-                    icon = Icons.Default.LocationOn,
-                    label = "Location",
-                    isActive = currentStep == SchedulingStep.LOCATION,
-                    isCompleted = selectedLocation != null
-                )
-                Spacer(modifier = Modifier.width(48.dp))
-                ProgressStep(
-                    icon = Icons.Default.CalendarToday,
-                    label = "Schedule",
-                    isActive = currentStep == SchedulingStep.DATE,
-                    isCompleted = selectedDateTime != null
-                )
-            }
-
-            // Content Area
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            ) {
-                when (currentStep) {
-                    SchedulingStep.LOCATION -> {
-                        LocationPickerScreen(
-                            onLocationSelected = { location ->
-                                selectedLocation = location
-                                currentStep = SchedulingStep.DATE
-                            }
-                        )
-                    }
-                    SchedulingStep.DATE -> {
-                        DateTimePicker(
-                            onDateTimeSelected = { dateTime ->
-                                selectedDateTime = dateTime
-                                showReviewDialog = true
-                            }
-                        )
-                    }
-                    else -> Unit
-                }
-            }
-
-            // Bottom Actions
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                if (currentStep != SchedulingStep.LOCATION) {
-                    OutlinedButton(
-                        onClick = { currentStep = SchedulingStep.LOCATION },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Back")
-                    }
-                }
-                Button(
-                    onClick = {
-                        when (currentStep) {
-                            SchedulingStep.LOCATION -> {
-                                if (selectedLocation != null) {
+                // Content Area
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) {
+                    when (currentStep) {
+                        SchedulingStep.LOCATION -> {
+                            Log.d("UpcomingTab", "Displaying LocationPickerScreen")
+                            LocationPickerScreen(
+                                onLocationSelected = { location ->
+                                    Log.d("UpcomingTab", "Location selected: ${location.name}")
+                                    selectedLocation = location
                                     currentStep = SchedulingStep.DATE
                                 }
-                            }
-                            SchedulingStep.DATE -> {
-                                if (selectedDateTime != null) {
+                            )
+                        }
+                        SchedulingStep.DATE -> {
+                            Log.d("UpcomingTab", "Displaying DateTimePicker")
+                            DateTimePicker(
+                                onDateTimeSelected = { dateTime ->
+                                    Log.d("UpcomingTab", "DateTime selected: $dateTime")
+                                    selectedDateTime = dateTime
                                     showReviewDialog = true
                                 }
-                            }
-                            else -> Unit
+                            )
                         }
-                    },
-                    modifier = Modifier.weight(1f),
-                    enabled = when (currentStep) {
-                        SchedulingStep.LOCATION -> selectedLocation != null
-                        SchedulingStep.DATE -> selectedDateTime != null
-                        else -> false
                     }
+                }
+
+                // Bottom Actions
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    if (currentStep != SchedulingStep.LOCATION) {
+                        OutlinedButton(
+                            onClick = {
+                                Log.d("UpcomingTab", "Back button clicked, returning to location step")
+                                currentStep = SchedulingStep.LOCATION
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Back")
+                        }
+                    }
+                    Button(
+                        onClick = {
+                            when (currentStep) {
+                                SchedulingStep.LOCATION -> {
+                                    Log.d("UpcomingTab", "Continue clicked in Location step with location: ${selectedLocation?.name}")
+                                    if (selectedLocation != null) {
+                                        currentStep = SchedulingStep.DATE
+                                    }
+                                }
+                                SchedulingStep.DATE -> {
+                                    Log.d("UpcomingTab", "Continue clicked in Date step with datetime: $selectedDateTime")
+                                    if (selectedDateTime != null) {
+                                        showReviewDialog = true
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        enabled = when (currentStep) {
+                            SchedulingStep.LOCATION -> selectedLocation != null
+                            SchedulingStep.DATE -> selectedDateTime != null
+                        }
                     ) {
-                        Text("Continue")
-                        Icon(
-                            imageVector = Icons.Default.ArrowForward,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Continue")
+                            Icon(
+                                imageVector = Icons.Default.ArrowForward,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }
         }
-    }
-
-    // Review Dialog
-    if (showReviewDialog && selectedLocation != null && selectedDateTime != null) {
-        ReviewDialog(
-            match = currentMatch,
-            location = selectedLocation!!,
-            dateTime = selectedDateTime!!,
-            onConfirm = {
-                val newRequest = PlaydateRequest(
-                    id = UUID.randomUUID().toString(),
-                    matchId = currentMatch.match.id,
-                    requesterId = currentMatch.match.user1Id,
-                    receiverId = currentMatch.match.user2Id,
-                    suggestedTimeslots = listOf(
-                        selectedDateTime!!.toEpochSecond(ZoneOffset.UTC)
-                    ),
-                    selectedLocationId = selectedLocation!!.placeId,
-                    status = RequestStatus.PENDING,
-                    lastUpdated = System.currentTimeMillis()
+    } ?: run {
+        // Error state - when currentMatch is null
+        ModalBottomSheet(
+            onDismissRequest = onDismiss,
+            sheetState = rememberModalBottomSheetState(),
+            modifier = Modifier.fillMaxHeight(0.5f)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(48.dp)
                 )
-                onSchedule(newRequest)
-                onDismiss()
-            },
-            onDismiss = {
-                showReviewDialog = false
+
+                Text(
+                    text = "Please set up your dog's profile first",
+                    style = MaterialTheme.typography.titleMedium,
+                    textAlign = TextAlign.Center
+                )
+
+                Text(
+                    text = "You need to create a dog profile before you can schedule playdates",
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Got it")
+                }
             }
-        )
+        }
     }
 }
-
 @Composable
 private fun ProgressStep(
     icon: ImageVector,

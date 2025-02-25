@@ -5,23 +5,37 @@ import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
-import io.pawsomepals.app.utils.ImageHandler
+import io.pawsomepals.app.data.repository.PhotoRepository
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun PhotoPicker(
-    imageHandler: ImageHandler,
+    photoRepository: PhotoRepository,  // Change from ImageHandler
     onPhotoSelected: suspend (Uri) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
@@ -39,7 +53,7 @@ fun PhotoPicker(
         if (success && tempPhotoUri != null) {
             scope.launch {
                 try {
-                    val processedUri = imageHandler.processImage(tempPhotoUri!!)
+                    val processedUri = photoRepository.compressImage(tempPhotoUri!!, 1024)  // Use PhotoRepository directly
                     onPhotoSelected(processedUri)
                     onDismiss()
                 } catch (e: Exception) {
@@ -71,7 +85,7 @@ fun PhotoPicker(
         uri?.let {
             scope.launch {
                 try {
-                    val processedUri = imageHandler.processImage(it)
+                    val processedUri = photoRepository.compressImage(it, 1024)  // Use PhotoRepository directly
                     onPhotoSelected(processedUri)
                     onDismiss()
                 } catch (e: Exception) {
@@ -154,14 +168,14 @@ private fun createTempPhotoUri(context: Context): Uri {
 @Composable
 fun PhotoPickerButton(
     onPhotoSelected: suspend (Uri) -> Unit,
-    imageHandler: ImageHandler,
+    photoRepository: PhotoRepository,  // Change from ImageHandler
     modifier: Modifier = Modifier
 ) {
     var showPhotoPicker by remember { mutableStateOf(false) }
 
     if (showPhotoPicker) {
         PhotoPicker(
-            imageHandler = imageHandler,
+            photoRepository = photoRepository,  // Update parameter name
             onPhotoSelected = onPhotoSelected,
             onDismiss = { showPhotoPicker = false }
         )

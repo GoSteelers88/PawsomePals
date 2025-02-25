@@ -2,6 +2,7 @@ package io.pawsomepals.app.di
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.ContextCompat
 import androidx.datastore.core.DataStore
 import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
@@ -17,6 +18,7 @@ import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import com.google.android.libraries.places.api.net.PlacesClient
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
@@ -26,16 +28,22 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import io.pawsomepals.app.ai.AIFeatures
+import io.pawsomepals.app.auth.AuthStateManager
+import io.pawsomepals.app.auth.AuthenticationDelegate
+import io.pawsomepals.app.auth.AuthenticationDelegateImpl
 import io.pawsomepals.app.auth.GoogleAuthManager
 import io.pawsomepals.app.data.AppDatabase
 import io.pawsomepals.app.data.DataManager
 import io.pawsomepals.app.data.dao.ChatDao
+import io.pawsomepals.app.data.dao.DogDao
 import io.pawsomepals.app.data.dao.DogFriendlyLocationDao
+import io.pawsomepals.app.data.dao.MatchDao
 import io.pawsomepals.app.data.dao.PhotoDao
 import io.pawsomepals.app.data.dao.PlaydateDao
 import io.pawsomepals.app.data.dao.QuestionDao
 import io.pawsomepals.app.data.dao.SettingsDao
 import io.pawsomepals.app.data.dao.TimeSlotDao
+import io.pawsomepals.app.data.dao.UserDao
 import io.pawsomepals.app.data.managers.CalendarManager
 import io.pawsomepals.app.data.preferences.UserPreferences
 import io.pawsomepals.app.data.remote.PhotoApi
@@ -53,28 +61,42 @@ import io.pawsomepals.app.data.repository.PlaydateRepository
 import io.pawsomepals.app.data.repository.QuestionRepository
 import io.pawsomepals.app.data.repository.TimeSlotRepository
 import io.pawsomepals.app.data.repository.UserRepository
+import io.pawsomepals.app.discovery.ProfileDiscoveryService
+import io.pawsomepals.app.discovery.queue.LocationAwareQueueManager
 import io.pawsomepals.app.notification.NotificationManager
 import io.pawsomepals.app.service.AchievementService
 import io.pawsomepals.app.service.AnalyticsService
 import io.pawsomepals.app.service.CalendarService
 import io.pawsomepals.app.service.MatchingService
+import io.pawsomepals.app.service.UserServiceManager
 import io.pawsomepals.app.service.location.EnhancedLocationService
 import io.pawsomepals.app.service.location.GoogleMapsService
 import io.pawsomepals.app.service.location.LocationCache
+import io.pawsomepals.app.service.location.LocationMatchingEngine
+import io.pawsomepals.app.service.location.LocationProvider
 import io.pawsomepals.app.service.location.LocationSearchService
 import io.pawsomepals.app.service.location.LocationService
 import io.pawsomepals.app.service.location.LocationSuggestionService
 import io.pawsomepals.app.service.location.PlaceService
+import io.pawsomepals.app.service.location.PlacesInitializer
+import io.pawsomepals.app.service.weather.OpenWeatherApi
+import io.pawsomepals.app.service.weather.WeatherService
+import io.pawsomepals.app.utils.CameraManager
 import io.pawsomepals.app.utils.CameraUtils
-import io.pawsomepals.app.utils.ImageHandler
 import io.pawsomepals.app.utils.LocationMapper
 import io.pawsomepals.app.utils.LocationValidator
 import io.pawsomepals.app.utils.NetworkUtils
 import io.pawsomepals.app.utils.RecaptchaManager
 import io.pawsomepals.app.utils.RemoteConfigManager
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import java.util.concurrent.Executor
+import javax.inject.Provider
+import javax.inject.Qualifier
 import javax.inject.Singleton
 
 
@@ -82,13 +104,109 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object AppModule {
     // Core Firebase Providers
+
+    @Provides
+    @Singleton
+    fun provideAuthStateManager(
+        auth: FirebaseAuth,
+        userRepository: UserRepository,
+        firestore: FirebaseFirestore
+    ): AuthStateManager = AuthStateManager(auth, userRepository, firestore)
+
+
+    @Provides
+    @Singleton
+    fun provideLazyDataManager(provider: Provider<DataManager>): Lazy<DataManager> {
+        return lazy { provider.get() }
+    }
+
     @Provides
     @Singleton
     fun provideFirebaseAuth(): FirebaseAuth = FirebaseAuth.getInstance()
 
+
+    @Provides
+    @Singleton
+    fun provideProfileDiscoveryService(
+        dogProfileRepository: DogProfileRepository,
+        locationService: LocationService,
+        locationMatchingEngine: LocationMatchingEngine,
+        matchingService: MatchingService,
+        queueManager: LocationAwareQueueManager
+    ): ProfileDiscoveryService = ProfileDiscoveryService(
+        dogProfileRepository,
+        locationService,
+        locationMatchingEngine,
+        matchingService,
+        queueManager
+    )
+
+    @Provides
+    @Singleton
+    fun provideLocationAwareQueueManager(
+        locationService: LocationService
+    ): LocationAwareQueueManager = LocationAwareQueueManager(locationService)
+
+    @Provides
+    @Singleton
+    fun provideLocationMatchingEngine(
+        locationService: LocationService
+    ): LocationMatchingEngine = LocationMatchingEngine(locationService)
+
+    @Provides
+    @Singleton
+    fun provideCrashlytics(): FirebaseCrashlytics = FirebaseCrashlytics.getInstance()
+
+
+
+    @Provides
+    @Singleton
+    fun provideDataManager(
+        appDatabase: AppDatabase,
+        firestore: FirebaseFirestore,
+        auth: FirebaseAuth,
+        storage: FirebaseStorage,
+        @ApplicationContext context: Context,
+        locationService: LocationService,
+        matchingService: MatchingService,
+        calendarService: CalendarService,
+        googleAuthManager: GoogleAuthManager,
+        authStateManager: AuthStateManager,
+        photoRepository: PhotoRepository
+    ): DataManager = DataManager(
+        appDatabase = appDatabase,
+        firestore = firestore,
+        auth = auth,
+        storage = storage,
+        context = context,
+        locationService = locationService,
+        matchingService = matchingService,
+        calendarService = calendarService,
+        googleAuthManager = googleAuthManager,
+        authStateManager = authStateManager,
+        photoRepository = photoRepository
+    )
+
+
+
+
     @Provides
     @Singleton
     fun provideFirebaseFirestore(): FirebaseFirestore = FirebaseFirestore.getInstance()
+
+    @Provides
+    @Singleton
+    fun provideAuthenticationDelegate(
+        dataManager: Lazy<DataManager>
+    ): AuthenticationDelegate = AuthenticationDelegateImpl(dataManager)
+
+
+
+
+    @Qualifier
+    @Retention(AnnotationRetention.BINARY)
+    annotation class DataManagerQualifier
+
 
     @Provides
     @Singleton
@@ -146,11 +264,7 @@ object AppModule {
     // Config & Utils Providers
     @Provides
     @Singleton
-    fun provideRemoteConfigManager(): RemoteConfigManager {
-        val remoteConfigManager = RemoteConfigManager()
-        remoteConfigManager.initialize()
-        return remoteConfigManager
-    }
+    fun provideRemoteConfigManager(): RemoteConfigManager = RemoteConfigManager()
 
     @Provides
     @Singleton
@@ -164,20 +278,22 @@ object AppModule {
     fun provideNetworkUtils(@ApplicationContext context: Context): NetworkUtils =
         NetworkUtils(context)
 
-    @Provides
-    @Singleton
-    fun provideImageHandler(@ApplicationContext context: Context): ImageHandler =
-        ImageHandler(context)
+
 
     // Repository Providers
     @Provides
     @Singleton
     fun provideUserRepository(
-        db: AppDatabase,
+        userDao: UserDao,
+        dogDao: DogDao,
         firestore: FirebaseFirestore,
         auth: FirebaseAuth
-    ): UserRepository = UserRepository(db.userDao(), db.dogDao(), firestore, auth)
-
+    ): UserRepository = UserRepository(
+        userDao = userDao,
+        dogDao = dogDao,
+        firestore = firestore,
+        auth = auth
+    )
     @Provides
     @Singleton
     fun provideEnhancedLocationService(
@@ -189,6 +305,58 @@ object AppModule {
         placeService = placeService,
         locationCache = locationCache
     )
+
+
+    @Provides
+    @Singleton
+    fun provideUserServiceManager(
+        auth: FirebaseAuth,
+        firestore: FirebaseFirestore,
+        userDao: UserDao,
+        dogDao: DogDao,
+        matchDao: MatchDao,
+        @ApplicationScope scope: CoroutineScope
+    ): UserServiceManager {
+        return UserServiceManager(
+            auth = auth,
+            firestore = firestore,
+            userDao = userDao,
+            dogDao = dogDao,
+            matchDao = matchDao,
+            scope = scope
+        )
+    }
+
+    @Provides
+    @Singleton
+    @ApplicationScope
+    fun provideApplicationScope(): CoroutineScope {
+        return CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    }
+    @Provides
+    @Singleton
+    fun provideUserDao(appDatabase: AppDatabase): UserDao = appDatabase.userDao()
+
+    @Provides
+    @Singleton
+    fun provideDogDao(appDatabase: AppDatabase): DogDao = appDatabase.dogDao()
+
+    @Provides
+    @Singleton
+    fun provideMatchDao(appDatabase: AppDatabase): MatchDao = appDatabase.matchDao()
+    @Provides
+    @Singleton
+    fun provideCameraManager(
+        @ApplicationContext context: Context,
+        mainExecutor: Executor
+    ): CameraManager {
+        return CameraManager(context, mainExecutor)
+    }
+    @Provides
+    @Singleton
+    fun provideMainExecutor(@ApplicationContext context: Context): Executor {
+        return ContextCompat.getMainExecutor(context)
+    }
 
 
     @Provides
@@ -207,9 +375,14 @@ object AppModule {
     fun providePhotoRepository(
         photoApi: PhotoApi,
         photoDao: PhotoDao,
-        storage: FirebaseStorage
-    ): PhotoRepository = PhotoRepository(photoApi, photoDao, storage)
-
+        storage: FirebaseStorage,
+        @ApplicationContext context: Context
+    ): PhotoRepository = PhotoRepository(
+        photoApi = photoApi,
+        photoDao = photoDao,
+        storage = storage,
+        context = context
+    )
     @Provides
     @Singleton
     fun providePlaydateRepository(
@@ -267,8 +440,15 @@ object AppModule {
         firebaseAuth: FirebaseAuth,
         firestore: FirebaseFirestore,
         recaptchaManager: RecaptchaManager,
+        authStateManager: AuthStateManager,
         @ApplicationContext context: Context
-    ): AuthRepository = AuthRepository(firebaseAuth, firestore, recaptchaManager, context)
+    ): AuthRepository = AuthRepository(
+        auth = firebaseAuth,
+        firestore = firestore,
+        recaptchaManager = recaptchaManager,
+        authStateManager = authStateManager,
+        context = context
+    )
 
     @Provides
     @Singleton
@@ -278,16 +458,7 @@ object AppModule {
     ): NotificationRepository = NotificationRepository(firestore, auth)
 
     // Service Providers
-    @Provides
-    @Singleton
-    fun provideMatchPreferences(): MatchingService.MatchPreferences =
-        MatchingService.MatchPreferences(
-            maxDistance = 50.0,
-            minCompatibilityScore = 0.4,
-            prioritizeEnergy = false,
-            prioritizeAge = false,
-            prioritizeBreed = false
-        )
+
     @Provides
     @Singleton
     fun provideMatchRepository(
@@ -310,16 +481,29 @@ object AppModule {
     @Singleton
     fun provideMatchingService(
         locationService: LocationService,
-        matchPreferences: MatchingService.MatchPreferences
-    ): MatchingService = MatchingService(locationService, matchPreferences)
+        locationMatchingEngine: LocationMatchingEngine,
+        matchPreferences: io.pawsomepals.app.service.matching.MatchPreferences // Update import
+    ): MatchingService = MatchingService(
+        locationService,
+        locationMatchingEngine,
+        matchPreferences
+    )
 
     @Provides
     @Singleton
     fun provideDogProfileRepository(
+        userDao: UserDao,
+        dogDao: DogDao,
         firestore: FirebaseFirestore,
+        auth: FirebaseAuth,
         userRepository: UserRepository
-    ): DogProfileRepository = DogProfileRepository(firestore, userRepository)
-
+    ): DogProfileRepository = DogProfileRepository(
+        userDao = userDao,
+        dogDao = dogDao,
+        firestore = firestore,
+        auth = auth,
+        userRepository = userRepository
+    )
     @Provides
     @Singleton
     fun provideFusedLocationProviderClient(
@@ -332,30 +516,70 @@ object AppModule {
     fun provideLocationService(
         @ApplicationContext context: Context,
         firestore: FirebaseFirestore,
-        fusedLocationClient: FusedLocationProviderClient
+        fusedLocationClient: FusedLocationProviderClient,
     ): LocationService = LocationService(
         context = context,
         firestore = firestore,
-        fusedLocationClient = fusedLocationClient
+        fusedLocationClient = fusedLocationClient,
     )
+
+
+    @Provides
+    @Singleton
+    fun provideLocationProvider(
+        @ApplicationContext context: Context,
+        firestore: FirebaseFirestore,
+        fusedLocationClient: FusedLocationProviderClient
+    ): LocationProvider {
+        return LocationService(context, firestore, fusedLocationClient)
+    }
+
 
     @Provides
     @Singleton
     fun provideLocationSuggestionService(
-        @ApplicationContext context: Context, firestore: FirebaseFirestore
-
-    ): LocationSuggestionService = LocationSuggestionService(context, firestore)
-
+        @ApplicationContext context: Context,
+        placesClient: PlacesClient,  // Changed from firestore
+        firestore: FirebaseFirestore
+    ): LocationSuggestionService = LocationSuggestionService(
+        context = context,
+        placesClient = placesClient,  // Pass placesClient
+        firestore = firestore
+    )
     @Provides
     @Singleton
     fun provideLocationSearchService(
-        placesClient: PlacesClient,
-        remoteConfigManager: RemoteConfigManager
-    ): LocationSearchService = LocationSearchService(
-        placesClient = placesClient,
-        remoteConfigManager = remoteConfigManager
-    )
+        @ApplicationContext context: Context,
+        remoteConfigManager: RemoteConfigManager,
+        placesInitializer: PlacesInitializer,
+        locationProvider: LocationProvider
+    ): LocationSearchService {
+        return LocationSearchService(
+            context = context,
+            placesInitializer = placesInitializer,
+            locationProvider = locationProvider,
+            remoteConfigManager = remoteConfigManager
+        )
+    }
 
+
+
+    @Provides
+    @Singleton
+    fun provideOpenWeatherApi(): OpenWeatherApi {
+        return Retrofit.Builder()
+            .baseUrl("https://api.openweathermap.org/")
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(OpenWeatherApi::class.java)
+    }
+
+    @Provides
+    @Singleton
+    fun provideWeatherService(
+        api: OpenWeatherApi,
+        remoteConfig: RemoteConfigManager
+    ): WeatherService = WeatherService(api, remoteConfig)
     @Provides
     @Singleton
     fun provideGoogleMapsService(
@@ -365,6 +589,9 @@ object AppModule {
     @Provides
     @Singleton
     fun provideLocationMapper(): LocationMapper = LocationMapper()
+
+
+
 
     @Provides
     @Singleton

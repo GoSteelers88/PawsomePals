@@ -10,7 +10,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -61,23 +60,7 @@ fun LocationFilters(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        FilterChip(
-            selected = outdoorOnly,
-            onClick = {
-                outdoorOnly = !outdoorOnly
-                onFilterChange(LocationSearchService.LocationFilters(outdoorOnly = outdoorOnly))
-            },
-            label = { Text("Outdoor Only") }
-        )
-        FilterChip(
-            selected = offLeashOnly,
-            onClick = {
-                offLeashOnly = !offLeashOnly
-                onFilterChange(LocationSearchService.LocationFilters(offLeashOnly = offLeashOnly))
-            },
-            label = { Text("Off-Leash Area") }
-        )
-        // Add more filters
+
     }
 }
 

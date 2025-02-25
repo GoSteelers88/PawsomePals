@@ -161,22 +161,20 @@ fun QuestionnaireScreen(
 
 
 
+    LaunchedEffect(completionStatus) {
+        if (completionStatus) {
+            onComplete()
+        }
+    }
+
     LaunchedEffect(error) {
         if (error != null) {
-            errorMessage = error ?: "An unknown error occurred"
+            errorMessage = error as String
             showErrorDialog = true
             viewModel.clearError()
         }
     }
 
-    LaunchedEffect(completionStatus) {
-        if (completionStatus && !hasCalledOnComplete) {
-            showCelebration = true
-            delay(3000) // Wait for celebration animation
-            hasCalledOnComplete = true
-            onComplete() // Remove the answers parameter
-        }
-    }
 
     // Back Handler
     BackHandler {
@@ -186,6 +184,7 @@ fun QuestionnaireScreen(
             showExitConfirmDialog = true
         }
     }
+
 
     // Helper Functions
     fun validateAnswer(answer: String?): Boolean = QuestionnaireData.validateAnswer(currentQuestion, answer)

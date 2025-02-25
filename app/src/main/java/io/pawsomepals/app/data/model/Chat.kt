@@ -42,6 +42,23 @@ data class Chat(
         CANCELLED           // Playdate was cancelled
     }
 
+    data class ChatUIState(
+        val id: String,
+        val otherDogPhotoUrl: String?,
+        val otherDogName: String,
+        val lastMessage: String?,
+        val timestamp: Long,
+        val isNewMatch: Boolean,
+        val hasUnreadMessages: Boolean,
+        val isPendingPlaydate: Boolean
+    )
+    data class ChatWithDetails(
+        val chat: Chat,
+        val otherDogPhotoUrl: String? = null,
+        val otherDogName: String = "Unknown Dog",
+        val isNewMatch: Boolean = false,
+        val pendingPlaydate: Boolean = false
+    )
     val formattedLastMessageTime: String
         get() {
             val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())

@@ -11,12 +11,14 @@ import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.location.LocationServices
+import com.google.android.libraries.places.api.Places
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
 import io.pawsomepals.app.R
 import io.pawsomepals.app.ai.AIFeatures
+import io.pawsomepals.app.auth.AuthStateManager
 import io.pawsomepals.app.auth.GoogleAuthManager
 import io.pawsomepals.app.data.AppDatabase
 import io.pawsomepals.app.data.managers.CalendarManager
@@ -28,31 +30,45 @@ import io.pawsomepals.app.data.repository.MatchRepository
 import io.pawsomepals.app.data.repository.OpenAIRepository
 import io.pawsomepals.app.data.repository.PlaydateRepository
 import io.pawsomepals.app.data.repository.QuestionRepository
+import io.pawsomepals.app.data.repository.SettingsRepository
 import io.pawsomepals.app.data.repository.UserRepository
+import io.pawsomepals.app.discovery.ProfileDiscoveryService
+import io.pawsomepals.app.discovery.queue.LocationAwareQueueManager
 import io.pawsomepals.app.notification.NotificationManager
 import io.pawsomepals.app.service.CalendarService
 import io.pawsomepals.app.service.MatchingService
+import io.pawsomepals.app.service.location.LocationMatchingEngine
 import io.pawsomepals.app.service.location.LocationService
 import io.pawsomepals.app.service.location.LocationSuggestionService
+import io.pawsomepals.app.service.matching.MatchPreferences
 import io.pawsomepals.app.utils.RecaptchaManager
 import io.pawsomepals.app.utils.RemoteConfigManager
+import io.pawsomepals.app.viewmodel.SwipingViewModel
 import javax.inject.Inject
 
 
-private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
+private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "user_preferences")
+
 
 class AppContainer @Inject constructor(
     private val context: Context,
     private val remoteConfigManager: RemoteConfigManager,
-    private val recaptchaManager: RecaptchaManager
-
-
+    private val recaptchaManager: RecaptchaManager,
+    private val settingsRepository: SettingsRepository
 ) {
     init {
         FirebaseApp.initializeApp(context)
     }
 
 
+    // Core Services - no dependencies
+    val firestore: FirebaseFirestore by lazy { FirebaseFirestore.getInstance() }
+    val firebaseAuth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
+    val database: AppDatabase by lazy { AppDatabase.getDatabase(context) }
+
+
+
+    private val dataStore: DataStore<Preferences> by lazy { context.dataStore }
 
     private val sharedPreferences: SharedPreferences by lazy {
         context.getSharedPreferences("PawsomePals", Context.MODE_PRIVATE)
@@ -62,27 +78,72 @@ class AppContainer @Inject constructor(
         UserPreferences(context.dataStore)
     }
 
+    // Basic Repositories - minimal dependencies
+    val userRepository: UserRepository by lazy {
+        UserRepository(
+            userDao = database.userDao(),
+            dogDao = database.dogDao(),
+            firestore = firestore,
+            auth = firebaseAuth
+        )
+    }
 
-    val database: AppDatabase by lazy { AppDatabase.getDatabase(context) }
+    // Auth Related Components
+    val authStateManager: AuthStateManager by lazy {
+        AuthStateManager(
+            auth = firebaseAuth,
+            userRepository = userRepository,
+            firestore = firestore
+        )
+    }
 
-    val firestore: FirebaseFirestore by lazy { FirebaseFirestore.getInstance() }
+    val authRepository: AuthRepository by lazy {
+        AuthRepository(
+            auth = firebaseAuth,
+            firestore = firestore,
+            recaptchaManager = recaptchaManager,
+            authStateManager = authStateManager,
+            context = context
+        )
+    }
 
-    val firebaseAuth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
 
-    // Add required dependencies for Calendar functionality
+    val locationService: LocationService by lazy {
+        LocationService(
+            context = context,
+            firestore = firestore,
+            fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
+        )
+    }
+
+
+
+    // Dependent Repositories
+    val dogProfileRepository: DogProfileRepository by lazy {
+        DogProfileRepository(
+            userDao = database.userDao(),
+            dogDao = database.dogDao(),
+            firestore = firestore,
+            auth = firebaseAuth,
+            userRepository = userRepository
+        )
+    }
+
+    // Calendar Related Components
     private val googleAuthManager: GoogleAuthManager by lazy {
         GoogleAuthManager(
             context = context,
             firebaseAuth = firebaseAuth
         )
     }
+
     private val calendarManager: CalendarManager by lazy {
         CalendarManager(
             context = context,
             firestore = firestore,
             auth = firebaseAuth,
             playdateDao = database.playdateDao(),
-            userPreferences = userPreferences  // Changed to use userPreferences
+            userPreferences = userPreferences
         )
     }
 
@@ -91,22 +152,40 @@ class AppContainer @Inject constructor(
             context = context,
             calendarManager = calendarManager,
             googleAuthManager = googleAuthManager,
-            firestore = firestore  // Added this parameter
+            firestore = firestore
         )
     }
 
-    val userRepository: UserRepository by lazy {
-        UserRepository(
-            database.userDao(),
-            database.dogDao(),
-            firestore,
-            firebaseAuth
-        )
-    }
-    val dogProfileRepository: DogProfileRepository by lazy {
-        DogProfileRepository(firestore, userRepository)
+    // Matching Related Components
+    val matchPreferences: MatchPreferences by lazy {
+        MatchPreferences()  // Use no-arg constructor since it's @Inject
     }
 
+    val locationMatchingEngine: LocationMatchingEngine by lazy {
+        LocationMatchingEngine(locationService)
+    }
+
+    val profileDiscoveryService: ProfileDiscoveryService by lazy {
+        ProfileDiscoveryService(
+            dogProfileRepository = dogProfileRepository,
+            locationService = locationService,
+            locationMatchingEngine = locationMatchingEngine,
+            matchingService = matchingService,
+            queueManager = locationAwareQueueManager
+        )
+    }
+
+    private val locationAwareQueueManager: LocationAwareQueueManager by lazy {
+        LocationAwareQueueManager(locationService)
+    }
+
+    val matchingService: MatchingService by lazy {
+        MatchingService(
+            locationService = locationService,
+            locationMatchingEngine = locationMatchingEngine,
+            matchPreferences = matchPreferences
+        )
+    }
     val matchRepository: MatchRepository by lazy {
         MatchRepository(
             firestore = firestore,
@@ -117,14 +196,19 @@ class AppContainer @Inject constructor(
         )
     }
 
+    // Chat and Playdate
     val chatRepository: ChatRepository by lazy {
         ChatRepository(
             firestore = firestore,
-            chatDao = database.chatDao(),  // Add this
+            chatDao = database.chatDao(),
             auth = firebaseAuth,
             dogProfileRepository = dogProfileRepository,
             matchRepository = matchRepository
         )
+    }
+
+    val notificationManager: NotificationManager by lazy {
+        NotificationManager(context)
     }
 
     val playdateRepository: PlaydateRepository by lazy {
@@ -133,43 +217,35 @@ class AppContainer @Inject constructor(
             userRepository,
             calendarService,
             firestore,
-            notificationManager  // Add this parameter
+            notificationManager
         )
     }
-    // Rest of the code remains the same
+
+    // AI Related Components
     val openAI: OpenAI by lazy {
         OpenAI(token = remoteConfigManager.getOpenAIKey())
     }
 
-    val openAIRepository: OpenAIRepository by lazy { OpenAIRepository(openAI) }
-
-    val locationService: LocationService by lazy {
-        LocationService(
-            context = context,
-            firestore = firestore,
-            fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
-        )
-    }
-    val matchPreferences: MatchingService.MatchPreferences by lazy {
-        MatchingService.MatchPreferences(
-            maxDistance = 50.0,
-            minCompatibilityScore = 0.4,
-            prioritizeEnergy = false,
-            prioritizeAge = false,
-            prioritizeBreed = false
-        )
+    val openAIRepository: OpenAIRepository by lazy {
+        OpenAIRepository(openAI)
     }
 
-    val matchingService: MatchingService by lazy {
-        MatchingService(locationService, matchPreferences)
+    val questionRepository: QuestionRepository by lazy {
+        QuestionRepository(database.questionDao(), firestore)
     }
 
-    val notificationManager: NotificationManager by lazy { NotificationManager(context) }
+    val aiFeatures: AIFeatures by lazy {
+        AIFeatures(openAI, userRepository, questionRepository)
+    }
 
+    // Additional Services
     val locationSuggestionService: LocationSuggestionService by lazy {
-        LocationSuggestionService(context,firestore)
+        LocationSuggestionService(
+            context = context,
+            placesClient = Places.createClient(context),  // Add this
+            firestore = firestore
+        )
     }
-
 
     val googleSignInClient: GoogleSignInClient by lazy {
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
@@ -179,17 +255,27 @@ class AppContainer @Inject constructor(
         GoogleSignIn.getClient(context, gso)
     }
 
-    val facebookCallbackManager: CallbackManager by lazy { CallbackManager.Factory.create() }
-
-    val authRepository: AuthRepository by lazy {
-        AuthRepository(firebaseAuth, firestore, recaptchaManager, context)
+    val facebookCallbackManager: CallbackManager by lazy {
+        CallbackManager.Factory.create()
     }
 
-    val questionRepository: QuestionRepository by lazy {
-        QuestionRepository(database.questionDao(), firestore)
-    }
+    // ViewModels - must be initialized last
+    val swipingViewModel: SwipingViewModel by lazy {
+        SwipingViewModel(
+            matchRepository = matchRepository,
+            dogProfileRepository = dogProfileRepository,
+            matchingService = matchingService,
+            settingsRepository = settingsRepository,
+            locationService = locationService,
+            chatRepository = chatRepository,
+            userRepository = userRepository,
+            authStateManager = authStateManager,
+            authRepository = authRepository,
+            auth = firebaseAuth,
+            profileDiscoveryService = profileDiscoveryService,
+            locationMatchingEngine = locationMatchingEngine,
+            locationAwareQueueManager = locationAwareQueueManager,
 
-    val aiFeatures: AIFeatures by lazy {
-        AIFeatures(openAI, userRepository, questionRepository)
+        )
     }
 }

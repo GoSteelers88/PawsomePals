@@ -20,6 +20,8 @@ import io.pawsomepals.app.data.managers.CalendarManager
 import io.pawsomepals.app.data.model.Dog
 import io.pawsomepals.app.data.model.DogFriendlyLocation
 import io.pawsomepals.app.data.model.Match
+import io.pawsomepals.app.data.model.MatchStatus
+import io.pawsomepals.app.data.model.MatchType
 import io.pawsomepals.app.data.model.Playdate
 import io.pawsomepals.app.data.model.PlaydateRequest
 import io.pawsomepals.app.data.model.PlaydateStatus
@@ -38,6 +40,7 @@ import io.pawsomepals.app.data.repository.PlaydateRepository
 import io.pawsomepals.app.data.repository.UserRepository
 import io.pawsomepals.app.notification.NotificationManager
 import io.pawsomepals.app.service.CalendarService
+import io.pawsomepals.app.service.location.LocationMatchingEngine
 import io.pawsomepals.app.service.location.LocationSuggestionService
 import io.pawsomepals.app.utils.TimeFormatUtils
 import kotlinx.coroutines.delay
@@ -108,7 +111,9 @@ class PlaydateViewModel @Inject constructor(
     private val workManager: WorkManager,
     private val auth: FirebaseAuth,
     private val dogProfileRepository: DogProfileRepository,
-    private val matchRepository: MatchRepository,  // Add this
+    private val matchRepository: MatchRepository,
+    private val locationMatchingEngine: LocationMatchingEngine  // Add this dependency
+// Add this
 // Add this
 
 ) : ViewModel() {
@@ -121,6 +126,8 @@ class PlaydateViewModel @Inject constructor(
     )
     private val _currentMatch = MutableStateFlow<Match.MatchWithDetails?>(null)
     val currentMatch: StateFlow<Match.MatchWithDetails?> = _currentMatch.asStateFlow()
+    private var lastCreatedMatch: Match.MatchWithDetails? = null
+
 
     fun createPlaydateRequest() {
         viewModelScope.launch {
@@ -167,21 +174,76 @@ class PlaydateViewModel @Inject constructor(
     fun getMatchDetails(matchId: String): StateFlow<Match.MatchWithDetails?> {
         viewModelScope.launch {
             try {
-                val matchResult = matchRepository.getMatchById(matchId)
-                val match = matchResult.getOrNull() ?: return@launch
+                if (matchId == "new") {
+                    // Only create new match if we haven't created one yet
+                    if (_currentMatch.value == null && lastCreatedMatch == null) {
+                        val currentUser = userRepository.getCurrentUser()
+                        val currentUserDog = userRepository.getCurrentUserDog()
 
-                val currentDogId = getCurrentDogId()
-                val otherDog = dogProfileRepository.getDogById(match.getOtherDogId(currentDogId))
-                    .getOrNull() ?: return@launch
+                        if (currentUser != null && currentUserDog != null) {
+                            val timestamp = System.currentTimeMillis()
+                            val expiryTimestamp = timestamp + (7 * 24 * 60 * 60 * 1000) // 7 days
 
-                val matchWithDetails = Match.MatchWithDetails(
-                    match = match,
-                    otherDog = otherDog,
-                    distanceAway = match.getDistanceString()
-                )
-                _currentMatch.value = matchWithDetails
+                            val initialMatch = Match.MatchWithDetails(
+                                match = Match(
+                                    id = UUID.randomUUID().toString(),  // Generate proper UUID
+                                    user1Id = currentUser.id,
+                                    user2Id = "",
+                                    dog1Id = currentUserDog.id,
+                                    dog2Id = "",
+                                    compatibilityScore = 0.0,
+                                    status = MatchStatus.PENDING,
+                                    matchReasons = emptyList(),
+                                    matchType = MatchType.NORMAL,
+                                    locationDistance = null,
+                                    initiatorDogId = currentUserDog.id,
+                                    timestamp = timestamp,
+                                    lastInteractionTimestamp = timestamp,
+                                    expiryTimestamp = expiryTimestamp,
+                                    preferredPlaydateLocation = null,
+                                    preferredPlaydateTime = null,
+                                    chatId = null,
+                                    chatCreatedAt = null,
+                                    geoHash = "7zzzzzzzzz",  // Default geoHash
+                                    lastUpdated = timestamp,
+                                    isArchived = false,
+                                    isHidden = false,
+                                    hasUnreadMessages = false
+                                ),
+                                otherDog = currentUserDog,
+                                distanceAway = "0 km"
+                            )
+
+                            lastCreatedMatch = initialMatch
+                            _currentMatch.value = initialMatch
+                            Log.d("PlaydateViewModel", "Created new match with dog: ${currentUserDog.id}")
+                        } else {
+                            Log.e("PlaydateViewModel", "User or dog not found. User: $currentUser, Dog: $currentUserDog")
+                            _uiState.update { it.copy(error = "Please complete your dog's profile first") }
+                        }
+                    } else if (lastCreatedMatch != null) {
+                        _currentMatch.value = lastCreatedMatch
+                        Log.d("PlaydateViewModel", "Reusing existing match")
+                    }
+                } else {
+                    // Existing match loading code
+                    val matchResult = matchRepository.getMatchById(matchId)
+                    val match = matchResult.getOrNull() ?: return@launch
+
+                    val currentDogId = getCurrentDogId()
+                    val otherDog = dogProfileRepository.getDogById(match.getOtherDogId(currentDogId))
+                        .getOrNull() ?: return@launch
+
+                    val matchWithDetails = Match.MatchWithDetails(
+                        match = match,
+                        otherDog = otherDog,
+                        distanceAway = match.getDistanceString()
+                    )
+                    _currentMatch.value = matchWithDetails
+                }
             } catch (e: Exception) {
-                _uiState.update { it.copy(error = "Failed to load match details: ${e.message}") }
+                Log.e("PlaydateViewModel", "Error creating match", e)
+                _uiState.update { it.copy(error = "Error: ${e.message}") }
             }
         }
         return currentMatch
@@ -204,6 +266,54 @@ class PlaydateViewModel @Inject constructor(
     private suspend fun getCurrentUserId(): String {
         return auth.currentUser?.uid
             ?: throw IllegalStateException("User not logged in")
+    }
+    fun suggestMeetingLocations(match: Match) {
+        viewModelScope.launch {
+            try {
+                // First get the Dog objects from their IDs
+                val dog1Result = dogProfileRepository.getDogById(match.dog1Id)
+                val dog2Result = dogProfileRepository.getDogById(match.dog2Id)
+
+                // Unwrap the results and ensure both dogs were found
+                val (dog1, dog2) = when {
+                    dog1Result.isSuccess && dog2Result.isSuccess -> {
+                        Pair(
+                            dog1Result.getOrNull(),
+                            dog2Result.getOrNull()
+                        )
+                    }
+                    else -> {
+                        _uiState.update { it.copy(
+                            error = "Could not load dog profiles",
+                            isLoading = false
+                        )}
+                        return@launch
+                    }
+                }
+
+                // Make sure neither dog is null
+                if (dog1 == null || dog2 == null) {
+                    _uiState.update { it.copy(
+                        error = "One or both dogs not found",
+                        isLoading = false
+                    )}
+                    return@launch
+                }
+
+                // Now we can call findCommonAreas with the actual Dog objects
+                val commonAreas = locationMatchingEngine.findCommonAreas(dog1, dog2)
+
+                _uiState.update { it.copy(
+                    suggestedLocations = commonAreas,
+                    isLoading = false
+                )}
+            } catch (e: Exception) {
+                _uiState.update { it.copy(
+                    error = "Failed to load suggested locations: ${e.message}",
+                    isLoading = false
+                )}
+            }
+        }
     }
 
     @RequiresApi(Build.VERSION_CODES.O)
@@ -389,12 +499,14 @@ class PlaydateViewModel @Inject constructor(
     fun onDateSelected(date: LocalDate) {
         _selectedDate.value = date
     }
-    fun startScheduling(matchWithDetails: Match.MatchWithDetails) {  // Changed parameter type
+    // Need to restructure:
+    fun startScheduling(matchWithDetails: Match.MatchWithDetails) {
         viewModelScope.launch {
             _uiState.update { it.copy(
                 isScheduling = true,
-                selectedMatch = matchWithDetails  // Store the MatchWithDetails
+                selectedMatch = matchWithDetails
             )}
+            loadUnscheduledMatches()  // Use existing function in PlaydateViewModel
         }
     }
 
@@ -1452,6 +1564,10 @@ class PlaydateViewModel @Inject constructor(
 
     fun refreshStats() {
         updateStats()
+    }
+    fun clearMatch() {
+        lastCreatedMatch = null
+        _currentMatch.value = null
     }
 
     sealed class TimeSlotAction {

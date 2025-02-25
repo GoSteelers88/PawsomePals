@@ -3,9 +3,9 @@ package io.pawsomepals.app.data.model
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import androidx.room.TypeConverters
+import com.google.firebase.database.IgnoreExtraProperties
 import io.pawsomepals.app.data.converters.Converters
 import io.pawsomepals.app.data.converters.LocalDateConverter
-import com.google.firebase.database.IgnoreExtraProperties
 import java.time.LocalDate
 
 @IgnoreExtraProperties
@@ -18,7 +18,7 @@ data class User(
     // Basic user info
     var username: String = "",
     var email: String = "",
-    var password: String = "",
+
     var firstName: String? = null,
     var lastName: String? = null,
     var bio: String? = null,
@@ -34,6 +34,9 @@ data class User(
     var hasAcceptedTerms: Boolean = false,
     var hasCompletedQuestionnaire: Boolean = false,
     var lastLoginTime: Long = System.currentTimeMillis(),
+    var lastUpdated: Long = System.currentTimeMillis(), // Add this field
+
+
 
     // Location
     val latitude: Double? = null,
@@ -56,7 +59,7 @@ data class User(
     var displayName: String? = null,
 ) {
     // No-argument constructor required by Firebase
-    constructor() : this(id = "", username = "", email = "", password = "")
+    constructor() : this(id = "", username = "", email = "")
 
     // Initialize Firestore-specific fields
     init {

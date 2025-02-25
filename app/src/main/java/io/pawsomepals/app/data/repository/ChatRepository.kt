@@ -7,7 +7,6 @@ import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.ktx.snapshots
 import io.pawsomepals.app.data.dao.ChatDao
 import io.pawsomepals.app.data.model.Chat
-import io.pawsomepals.app.data.model.Match
 import io.pawsomepals.app.data.model.Message
 import io.pawsomepals.app.data.model.MessageType
 import kotlinx.coroutines.channels.awaitClose
@@ -34,17 +33,30 @@ class ChatRepository @Inject constructor(
     }
     private val messagesCollection = firestore.collection(COLLECTION_MESSAGES)
     private val chatsCollection = firestore.collection(COLLECTION_CHATS)
+
     fun getMessages(chatId: String): Flow<List<Message>> = callbackFlow {
-        val listener = messagesCollection
+        Log.d("ChatRepository", "Setting up messages listener for chatId: $chatId")
+
+        val query = messagesCollection
             .whereEqualTo("chatId", chatId)
             .orderBy("timestamp", Query.Direction.ASCENDING)
-            .snapshots()
-            .collect { snapshot ->
-                val messages: List<Message> = snapshot.toObjects(Message::class.java)
-                trySend(messages).isSuccess
+
+        val listener = query.addSnapshotListener { snapshot, error ->
+            if (error != null) {
+                Log.e("ChatRepository", "Error listening to messages", error)
+                return@addSnapshotListener
             }
 
-        awaitClose { }
+            Log.d("ChatRepository", "Message snapshot received. Size: ${snapshot?.size()}")
+            snapshot?.documents?.forEach { doc ->
+                Log.d("ChatRepository", "Message doc: ${doc.data}")
+            }
+
+            val messages = snapshot?.toObjects(Message::class.java) ?: emptyList()
+            trySend(messages).isSuccess
+        }
+
+        awaitClose { listener.remove() }
     }
     suspend fun findChatForMatch(matchId: String): Chat? {
         return firestore.collection("chats")
@@ -77,33 +89,32 @@ class ChatRepository @Inject constructor(
         return chat.id
     }
 
-    suspend fun createChatForMatch(match: Match): Result<Chat> {
-        return try {
-            val chat = Chat(
-                id = UUID.randomUUID().toString(),
-                matchId = match.id,
-                user1Id = match.user1Id,
-                user2Id = match.user2Id,
-                dog1Id = match.dog1Id,
-                dog2Id = match.dog2Id,
-                participants = listOf(match.user1Id, match.user2Id),
-                created = System.currentTimeMillis()
-            )
+    suspend fun createChat(
+        user1Id: String,
+        user2Id: String,
+        matchId: String,
+        dog1Id: String,  // Add these parameters
+        dog2Id: String   // Add these parameters
+    ): String {
+        val chat = Chat(
+            id = UUID.randomUUID().toString(),
+            user1Id = user1Id,
+            user2Id = user2Id,
+            matchId = matchId,
+            dog1Id = dog1Id,  // Add these fields
+            dog2Id = dog2Id,  // Add these fields
+            participants = listOf(user1Id, user2Id),
+            created = System.currentTimeMillis()
+        )
 
-            // Save to Firestore
-            firestore.collection(COLLECTION_CHATS)
-                .document(chat.id)
-                .set(chat)
-                .await()
+        firestore.collection("chats")
+            .document(chat.id)
+            .set(chat)
+            .await()
 
-            // Save to local Room database
-            chatDao.insertChat(chat)
-
-            Result.success(chat)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+        return chat.id
     }
+
     fun observeChats(): Flow<List<Chat>> = flow {
         val userId = auth.currentUser?.uid ?: return@flow
 
@@ -192,6 +203,7 @@ class ChatRepository @Inject constructor(
 
 
 
+    // In ChatRepository.kt
     suspend fun sendMessage(
         chatId: String,
         senderId: String,
@@ -199,17 +211,38 @@ class ChatRepository @Inject constructor(
         type: MessageType = MessageType.TEXT,
         metadata: Map<String, Any>? = null
     ) {
+        // Get user's display name
+        val senderName = try {
+            firestore.collection("users")
+                .document(senderId)
+                .get()
+                .await()
+                .getString("displayName") ?: "Anonymous"
+        } catch (e: Exception) {
+            Log.e("ChatRepository", "Error fetching sender name", e)
+            "Anonymous"
+        }
+
+        // Generate a timestamp-based message ID
+        val timestamp = System.currentTimeMillis()
+        val messageId = "${chatId}_${timestamp}_${senderId}"
+
         val message = Message(
+            id = messageId,
             chatId = chatId,
             senderId = senderId,
+            senderName = senderName,
             content = content,
             type = type,
             metadata = metadata,
-            timestamp = System.currentTimeMillis()
+            timestamp = timestamp
         )
 
-        // Add message to Firestore
-        messagesCollection.add(message).await()
+        // Add message to Firestore using the generated ID
+        messagesCollection
+            .document(messageId)  // Use the specific ID instead of auto-generating
+            .set(message)         // Use set instead of add
+            .await()
 
         // Update last message in chat
         chatsCollection.document(chatId).update(
@@ -237,14 +270,34 @@ class ChatRepository @Inject constructor(
             .await()
     }
     suspend fun getAllChats(): Flow<List<Chat>> {
-        val currentUser = auth.currentUser?.uid ?: return flow { emit(emptyList()) }
+        val currentUser = auth.currentUser?.uid
+        Log.d("ChatRepository", "Getting chats - Current User ID: $currentUser")
+
+        if (currentUser == null) {
+            Log.d("ChatRepository", "No authenticated user found, returning empty flow")
+            return flow { emit(emptyList()) }
+        }
 
         return firestore.collection("chats")
             .whereArrayContains("participants", currentUser)
             .orderBy("lastMessageTimestamp", Query.Direction.DESCENDING)
             .snapshots()
             .map { snapshot ->
-                snapshot.toObjects(Chat::class.java)
+                if (snapshot.isEmpty) {
+                    Log.d("ChatRepository", "Firestore returned empty snapshot")
+                } else {
+                    Log.d("ChatRepository", """
+                    Firestore returned documents:
+                    Count: ${snapshot.size()}
+                    Documents: ${snapshot.documents.map {
+                        "ID: ${it.id}, Participants: ${it.get("participants")}"
+                    }}
+                """.trimIndent())
+                }
+
+                val chats = snapshot.toObjects(Chat::class.java)
+                Log.d("ChatRepository", "Converted to Chat objects: ${chats.size}")
+                chats
             }
     }
 
@@ -252,6 +305,7 @@ class ChatRepository @Inject constructor(
         val currentUserId = auth.currentUser?.uid ?: return
         messagesCollection
             .whereEqualTo("chatId", chatId)
+            .orderBy("senderId")
             .whereNotEqualTo("senderId", currentUserId)
             .get()
             .await()

@@ -4,5 +4,6 @@
     <string name="facebook_app_id">527141699750137</string>
     <string name="fb_login_protocol_scheme">fb527141699750137</string>
     <string name="facebook_client_token">5f8a74941436f7da5230b70876731479</string>
+    <string name="auth_password_mismatch">Passwords do not match</string>
 
 </resources>

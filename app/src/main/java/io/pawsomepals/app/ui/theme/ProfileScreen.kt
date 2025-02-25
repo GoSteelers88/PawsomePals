@@ -1,9 +1,15 @@
 package io.pawsomepals.app.ui.theme
 
+
+import android.Manifest
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.net.Uri
 import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,16 +17,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -38,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -46,26 +52,23 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import io.pawsomepals.app.R
 import io.pawsomepals.app.data.model.User
 import io.pawsomepals.app.ui.components.DirectionalIcon
 import io.pawsomepals.app.ui.components.DogProfileTab
-import io.pawsomepals.app.ui.components.SharedProfileField
-import io.pawsomepals.app.ui.components.SharedProfileSection
-import io.pawsomepals.app.utils.CameraPermissionHandler
-import io.pawsomepals.app.utils.CameraPermissionManager
+import io.pawsomepals.app.utils.CameraManager
 import io.pawsomepals.app.viewmodel.DogProfileViewModel
 import io.pawsomepals.app.viewmodel.ProfileViewModel
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -74,60 +77,42 @@ fun ProfileScreen(
     viewModel: ProfileViewModel,
     dogProfileViewModel: DogProfileViewModel,
     userId: String,
-    cameraPermissionManager: CameraPermissionManager,
     onBackClick: () -> Unit,
-    onNavigateToAddDog: () -> Unit
-
+    onNavigateToAddDog: () -> Unit,
+    cameraManager: CameraManager
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = listOf("User Profile", "Dog Profile")
-    val context = LocalContext.current
-    var photoUri by remember { mutableStateOf<Uri?>(null) }
-    var tempPhotoUri by remember { mutableStateOf<Uri?>(null) }
-    var isUpdatingPhoto by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    val user = viewModel.userProfile.collectAsState().value
-
-    val cameraLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.TakePicture()
-    ) { success ->
-        if (success && tempPhotoUri != null) {
-            isUpdatingPhoto = true
-            viewModel.updateUserProfilePicture(tempPhotoUri!!)
-            tempPhotoUri = null
-            isUpdatingPhoto = false
-        }
-    }
-
-
+    val userProfile by viewModel.userProfile.collectAsStateWithLifecycle()
+    val isLoading by viewModel.isLoading.collectAsState()
+    val error by viewModel.error.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
     val galleryLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
-    ) { uri ->
-        uri?.let { viewModel.updateUserProfilePicture(it) }
-    }
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            try {
-                tempPhotoUri = viewModel.getOutputFileUri(isProfile = true)  // Updated this line
-                tempPhotoUri?.let { uri ->
-                    cameraLauncher.launch(uri)
-                    isUpdatingPhoto = true
-                }
-            } catch (e: Exception) {
-                errorMessage = "Failed to initialize camera: ${e.message}"
-            }
-        } else {
-            errorMessage = "Camera permission is required to take a photo."
-        }
-    }
+    ) { uri -> uri?.let { viewModel.updateUserProfilePicture(it) } }
+
 
 
     LaunchedEffect(userId) {
-        viewModel.loadProfileById(userId)
-        viewModel.fetchUserDogs()
-        dogProfileViewModel.loadUserDogs()  // Add this line to load dog profiles
+        if (userId.isNotEmpty()) {
+            viewModel.loadProfileById(userId)
+            viewModel.fetchUserDogs()
+            dogProfileViewModel.loadUserDogs()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            cameraManager.cleanup()
+        }
+    }
+
+    error?.let { errorMessage ->
+        ErrorDialog(
+            message = errorMessage,
+            onDismiss = { viewModel.setError(null) }
+        )
     }
 
     Scaffold(
@@ -142,115 +127,331 @@ fun ProfileScreen(
             )
         }
     ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-        ) {
-            TabRow(selectedTabIndex = selectedTab) {
-                tabs.forEachIndexed { index, title ->
-                    Tab(
-                        text = { Text(title) },
-                        selected = selectedTab == index,
-                        onClick = { selectedTab = index }
+        if (isLoading) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+            ) {
+                TabRow(selectedTabIndex = selectedTab) {
+                    tabs.forEachIndexed { index, title ->
+                        Tab(
+                            text = { Text(title) },
+                            selected = selectedTab == index,
+                            onClick = { selectedTab = index }
+                        )
+                    }
+                }
+
+                when (selectedTab) {
+                    0 -> UserProfileContent(
+                        userProfile = userProfile,
+                        viewModel = viewModel,
+                        cameraManager = cameraManager,
+                        galleryLauncher = galleryLauncher
+                        // Remove cameraLauncher parameter
+                    )
+                    1 -> DogProfileTab(
+                        viewModel = viewModel,
+                        dogProfileViewModel = dogProfileViewModel,
+                        onNavigateToAddDog = onNavigateToAddDog,
+                        cameraManager = cameraManager,
+                        galleryLauncher = galleryLauncher
+
                     )
                 }
-            }
-
-            when (selectedTab) {
-                0 -> UserProfileTab(
-                    viewModel = viewModel,
-                    cameraPermissionManager = cameraPermissionManager, // Pass this
-                    cameraLauncher = cameraLauncher,
-                    galleryLauncher = galleryLauncher
-                )
-                1 -> DogProfileTab(
-                    viewModel = viewModel,
-                    dogProfileViewModel = dogProfileViewModel,  // Pass the dogProfileViewModel
-                    cameraLauncher = cameraLauncher,
-                    galleryLauncher = galleryLauncher,
-                    cameraPermissionManager = cameraPermissionManager, // Add this
-
-                    onNavigateToAddDog = onNavigateToAddDog
-                )
             }
         }
     }
 }
 
 @Composable
-private fun UserPhotoSection(
+private fun UserProfileContent(
     userProfile: User?,
     viewModel: ProfileViewModel,
-    cameraLauncher: ManagedActivityResultLauncher<Uri, Boolean>,
-    galleryLauncher: ManagedActivityResultLauncher<String, Uri?>,
-    cameraPermissionManager: CameraPermissionManager
+    cameraManager: CameraManager,
+    galleryLauncher: ManagedActivityResultLauncher<String, Uri?>
 ) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var showPhotoOptions by remember { mutableStateOf(false) }
-    var tempPhotoUri by remember { mutableStateOf<Uri?>(null) }
-    var isUpdatingPhoto by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var shouldLaunchCamera by remember { mutableStateOf(false) }
+    var isEditing by remember { mutableStateOf(false) }
+    var username by remember(userProfile) { mutableStateOf(userProfile?.username ?: "") }
+    var firstName by remember(userProfile) { mutableStateOf(userProfile?.firstName ?: "") }
+    var lastName by remember(userProfile) { mutableStateOf(userProfile?.lastName ?: "") }
+    var bio by remember(userProfile) { mutableStateOf(userProfile?.bio ?: "") }
+    var phoneNumber by remember(userProfile) { mutableStateOf(userProfile?.phoneNumber ?: "") }
+    var preferredContact by remember(userProfile) { mutableStateOf(userProfile?.preferredContact ?: "") }
+    var notificationsEnabled by remember(userProfile) { mutableStateOf(userProfile?.notificationsEnabled ?: false) }
 
-    fun handleCameraLaunch() {
-        scope.launch {
-            try {
-                tempPhotoUri = viewModel.getOutputFileUri(isProfile = true)
-                tempPhotoUri?.let { uri ->
-                    cameraLauncher.launch(uri)
-                }
-            } catch (e: SecurityException) {
-                errorMessage = "Failed to launch camera: ${e.message}"
-            }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item {
+            PhotoSection(
+                photoUrl = userProfile?.profilePictureUrl,
+                userId = userProfile?.id ?: "",
+                onPhotoUpdate = { uri -> viewModel.updateUserProfilePicture(uri) },
+                cameraManager = cameraManager,
+                galleryLauncher = galleryLauncher
+            )
         }
-    }
 
-    // Handle camera result
-    LaunchedEffect(cameraLauncher) {
-        snapshotFlow { isUpdatingPhoto }
-            .filter { it }
-            .collect {
-                tempPhotoUri?.let { uri ->
-                    try {
-                        viewModel.updateUserProfilePicture(uri)
-                    } catch (e: Exception) {
-                        errorMessage = "Failed to update profile picture: ${e.message}"
-                    } finally {
-                        isUpdatingPhoto = false
-                        tempPhotoUri = null
+        item {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ProfileTextField(
+                    value = username,
+                    onValueChange = { newUsername ->
+                        // Optional: Add username validation here
+                        if (newUsername.length <= 30 && !newUsername.contains(" ")) {
+                            username = newUsername
+                        }
+                    },
+                    label = "Username",
+                    enabled = isEditing,
+                    helperText = if (isEditing) "Username must be unique and without spaces" else null
+                )
+                ProfileTextField(
+                    value = firstName,
+                    onValueChange = { firstName = it },
+                    label = "First Name",
+                    enabled = isEditing
+                )
+                ProfileTextField(
+                    value = lastName,
+                    onValueChange = { lastName = it },
+                    label = "Last Name",
+                    enabled = isEditing
+                )
+                ProfileTextField(
+                    value = bio,
+                    onValueChange = { bio = it },
+                    label = "Bio",
+                    enabled = isEditing,
+                    singleLine = false,
+                    minLines = 3
+                )
+                ProfileTextField(
+                    value = phoneNumber,
+                    onValueChange = { phoneNumber = it },
+                    label = "Phone Number",
+                    enabled = isEditing
+                )
+                ProfileTextField(
+                    value = preferredContact,
+                    onValueChange = { preferredContact = it },
+                    label = "Preferred Contact Method",
+                    enabled = isEditing
+                )
+
+                if (isEditing) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Enable Notifications")
+                        Switch(
+                            checked = notificationsEnabled,
+                            onCheckedChange = { notificationsEnabled = it }
+                        )
                     }
                 }
             }
+        }
+
+        item {
+            if (isEditing) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            userProfile?.let { user ->
+                                viewModel.updateUserProfile(
+                                    user.copy(
+                                        username = username,  // Add username to update
+                                        firstName = firstName,
+                                        lastName = lastName,
+                                        bio = bio,
+                                        phoneNumber = phoneNumber,
+                                        preferredContact = preferredContact,
+                                        notificationsEnabled = notificationsEnabled
+                                    )
+                                )
+                            }
+                            isEditing = false
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Save")
+                    }
+                    Button(
+                        onClick = { isEditing = false },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            } else {
+                Button(
+                    onClick = { isEditing = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Edit Profile")
+                }
+            }
+        }
+    }
+}
+@Composable
+private fun ProfileTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    singleLine: Boolean = true,
+    minLines: Int = 1,
+    helperText: String? = null
+) {
+    Column {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            label = { Text(label) },
+            modifier = modifier.fillMaxWidth(),
+            enabled = enabled,
+            singleLine = singleLine,
+            minLines = minLines
+        )
+        helperText?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun PhotoSection(
+    photoUrl: String?,
+    userId: String,
+    onPhotoUpdate: (Uri) -> Unit,
+    cameraManager: CameraManager,
+    galleryLauncher: ManagedActivityResultLauncher<String, Uri?>
+) {
+    var showCamera by remember { mutableStateOf(false) }
+    var showPhotoOptions by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val cameraState by cameraManager.cameraState.collectAsStateWithLifecycle()
+
+    LaunchedEffect(cameraState) {
+        when (cameraState) {
+            is CameraManager.CameraState.Success -> {
+                val uri = (cameraState as CameraManager.CameraState.Success).uri
+                onPhotoUpdate(uri)
+                showCamera = false
+            }
+            is CameraManager.CameraState.Error -> {
+                errorMessage = (cameraState as CameraManager.CameraState.Error).message
+            }
+            else -> {}
+        }
     }
 
-    // Camera permission handler
-    CameraPermissionHandler(
-        viewModel = cameraPermissionManager,
-        onPermissionGranted = {
-            if (shouldLaunchCamera) {
-                handleCameraLaunch()
-                shouldLaunchCamera = false
-            }
-        },
-        onPermissionDenied = {
-            errorMessage = "Camera permission is required to take photos"
-            shouldLaunchCamera = false
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.entries.all { it.value }
+        if (allGranted) {
+            showCamera = true
+        } else {
+            errorMessage = "Camera and storage permissions are required"
         }
-    )
+    }
 
     Box(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center
     ) {
-        UserProfilePhoto(
-            photoUrl = userProfile?.profilePictureUrl,
-            onPhotoClick = { showPhotoOptions = true }
-        )
+        if (showCamera) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                AndroidView(
+                    factory = { context ->
+                        PreviewView(context).apply {
+                            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                    update = { previewView ->
+                        scope.launch {
+                            cameraManager.initializeCamera(lifecycleOwner, previewView)
+                        }
+                    }
+                )
+
+                IconButton(
+                    onClick = {
+                        scope.launch {
+                            val uri = cameraManager.capturePhoto()
+                            uri?.let {
+                                showCamera = false
+                                onPhotoUpdate(it)
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PhotoCamera,
+                        contentDescription = "Take Photo",
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(64.dp)
+                    )
+                }
+            }
+        } else {
+            AsyncImage(
+                model = photoUrl ?: R.drawable.ic_user_placeholder,
+                contentDescription = "Profile Photo",
+                modifier = Modifier
+                    .size(120.dp)
+                    .clip(CircleShape)
+                    .clickable { showPhotoOptions = true },
+                contentScale = ContentScale.Crop
+            )
+
+            Icon(
+                imageVector = Icons.Default.Edit,
+                contentDescription = "Edit Photo",
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                    .padding(4.dp),
+                tint = MaterialTheme.colorScheme.onPrimary
+            )
+        }
     }
 
-    // Photo options dialog
     if (showPhotoOptions) {
         AlertDialog(
             onDismissRequest = { showPhotoOptions = false },
@@ -262,11 +463,20 @@ private fun UserPhotoSection(
                 ) {
                     FilledTonalButton(
                         onClick = {
-                            shouldLaunchCamera = true
-                            showPhotoOptions = false
-                            if (cameraPermissionManager.checkPermission()) {
-                                handleCameraLaunch()
+                            when {
+                                cameraManager.hasRequiredPermissions() -> {
+                                    showCamera = true
+                                }
+                                else -> {
+                                    permissionLauncher.launch(
+                                        arrayOf(
+                                            Manifest.permission.CAMERA,
+                                            Manifest.permission.WRITE_EXTERNAL_STORAGE
+                                        )
+                                    )
+                                }
                             }
+                            showPhotoOptions = false
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -293,29 +503,11 @@ private fun UserPhotoSection(
         )
     }
 
-    // Loading Dialog
-    if (isUpdatingPhoto) {
-        AlertDialog(
-            onDismissRequest = { },
-            title = { Text("Updating Profile Picture") },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    CircularProgressIndicator()
-                }
-            },
-            confirmButton = { }
-        )
-    }
-
-    // Error Dialog
-    errorMessage?.let { error ->
+    if (errorMessage != null) {
         AlertDialog(
             onDismissRequest = { errorMessage = null },
             title = { Text("Error") },
-            text = { Text(error) },
+            text = { Text(errorMessage ?: "") },
             confirmButton = {
                 TextButton(onClick = { errorMessage = null }) {
                     Text("OK")
@@ -323,262 +515,51 @@ private fun UserPhotoSection(
             }
         )
     }
+    DisposableEffect(Unit) {
+        onDispose {
+            if (showCamera) {
+                cameraManager.cleanup()
+            }
+        }
+    }
 }
-
+private fun shouldShowRequestPermissionRationale(context: Context, permission: String): Boolean {
+    val activity = context.findActivity()
+    return activity?.shouldShowRequestPermissionRationale(permission) ?: false
+}
+private fun Context.findActivity(): Activity? {
+    var currentContext = this
+    while (currentContext is ContextWrapper) {
+        if (currentContext is Activity) {
+            return currentContext
+        }
+        currentContext = currentContext.baseContext
+    }
+    return null
+}
 @Composable
-fun UserProfileTab(
-    viewModel: ProfileViewModel,
-    cameraLauncher: ManagedActivityResultLauncher<Uri, Boolean>,
-    galleryLauncher: ManagedActivityResultLauncher<String, Uri?>,
-    cameraPermissionManager: CameraPermissionManager
+private fun ProfileTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    singleLine: Boolean = true,
+    minLines: Int = 1
 ) {
-    val userProfile by viewModel.userProfile.collectAsStateWithLifecycle()
-    var showEditDialog by remember { mutableStateOf(false) }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp)
-    ) {
-        // Photo Section
-        item {
-            UserPhotoSection(
-                userProfile = userProfile,
-                viewModel = viewModel,
-                cameraLauncher = cameraLauncher,
-                galleryLauncher = galleryLauncher,
-                cameraPermissionManager = cameraPermissionManager
-            )
-        }
-
-        item { Spacer(modifier = Modifier.height(24.dp)) }
-
-        // User Profile Sections
-        userProfile?.let { user ->
-            item { UserInfoSection(user) }
-            item { Spacer(modifier = Modifier.height(16.dp)) }
-            item { UserBioSection(user) }
-            item { Spacer(modifier = Modifier.height(16.dp)) }
-            item { UserPreferencesSection(user) }
-        }
-
-        item { Spacer(modifier = Modifier.height(16.dp)) }
-
-        // Edit Profile Button
-        item {
-            Button(
-                onClick = { showEditDialog = true },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Edit Profile")
-            }
-        }
-    }
-
-    // Edit Profile Dialog
-    if (showEditDialog && userProfile != null) {
-        EditProfileDialog(
-            user = userProfile!!,
-            onDismiss = { showEditDialog = false },
-            onSave = { updatedUser ->
-                viewModel.updateUserProfile(updatedUser)
-                showEditDialog = false
-            }
-        )
-    }
-}
-// Updated UserProfilePhoto composable
-@Composable
-private fun UserProfilePhoto(
-    photoUrl: String?,
-    onPhotoClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .size(120.dp)
-            .clip(CircleShape)
-            .clickable(onClick = onPhotoClick)
-    ) {
-        AsyncImage(
-            model = photoUrl ?: R.drawable.ic_user_placeholder,
-            contentDescription = "User Photo",
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop
-        )
-        Icon(
-            imageVector = Icons.Default.Edit,
-            contentDescription = "Edit Photo",
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .background(MaterialTheme.colorScheme.primary, CircleShape)
-                .padding(4.dp),
-            tint = MaterialTheme.colorScheme.onPrimary
-        )
-    }
-}
-@Composable
-fun EditProfileDialog(
-    user: User,
-    onDismiss: () -> Unit,
-    onSave: (User) -> Unit
-) {
-    var firstName by remember { mutableStateOf(user.firstName ?: "") }
-    var lastName by remember { mutableStateOf(user.lastName ?: "") }
-    var bio by remember { mutableStateOf(user.bio ?: "") }
-    var phoneNumber by remember { mutableStateOf(user.phoneNumber ?: "") }
-    var preferredContact by remember { mutableStateOf(user.preferredContact ?: "") }
-    var notificationsEnabled by remember { mutableStateOf(user.notificationsEnabled) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Edit Profile") },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = firstName,
-                    onValueChange = { firstName = it },
-                    label = { Text("First Name") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = lastName,
-                    onValueChange = { lastName = it },
-                    label = { Text("Last Name") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = bio,
-                    onValueChange = { bio = it },
-                    label = { Text("Bio") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 3
-                )
-
-                OutlinedTextField(
-                    value = phoneNumber,
-                    onValueChange = { phoneNumber = it },
-                    label = { Text("Phone Number") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = preferredContact,
-                    onValueChange = { preferredContact = it },
-                    label = { Text("Preferred Contact Method") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Enable Notifications")
-                    Switch(
-                        checked = notificationsEnabled,
-                        onCheckedChange = { notificationsEnabled = it }
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val updatedUser = user.copy(
-                        firstName = firstName,
-                        lastName = lastName,
-                        bio = bio,
-                        phoneNumber = phoneNumber,
-                        preferredContact = preferredContact,
-                        notificationsEnabled = notificationsEnabled
-                    )
-                    onSave(updatedUser)
-                    onDismiss()
-                }
-            ) {
-                Text("Save")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
-}
-
-
-
-
-@Composable
-private fun UserInfoSection(user: User) {
-    SharedProfileSection("Personal Information") {
-        SharedProfileField("Name", "${user.firstName} ${user.lastName}")
-        SharedProfileField("Username", user.username)
-        SharedProfileField("Email", user.email)
-        SharedProfileField("Phone", user.phoneNumber ?: "Not provided")
-    }
-}
-
-@Composable
-private fun UserBioSection(user: User) {
-    SharedProfileSection("About Me") {
-        Text(
-            text = user.bio ?: "No bio provided",
-            style = MaterialTheme.typography.bodyLarge
-        )
-    }
-}
-
-@Composable
-private fun UserPreferencesSection(user: User) {
-    SharedProfileSection("Preferences") {
-        SharedProfileField("Preferred Contact", user.preferredContact ?: "Not specified")
-        SharedProfileField("Notification Settings", if (user.notificationsEnabled == true) "Enabled" else "Disabled")
-    }
-}
-@Composable
-private fun UserPhotoOptionsDialog( // Renamed from PhotoOptionsDialog
-    onDismiss: () -> Unit,
-    onTakePhoto: () -> Unit,
-    onChooseFromGallery: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Choose Photo Option") },
-        text = { Text("Select a method to add a photo") },
-        confirmButton = {
-            TextButton(onClick = onTakePhoto) {
-                Text("Take Photo")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onChooseFromGallery) {
-                Text("Choose from Gallery")
-            }
-        }
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        modifier = modifier.fillMaxWidth(),
+        enabled = enabled,
+        singleLine = singleLine,
+        minLines = minLines
     )
 }
 
 @Composable
-private fun LoadingDialog() {
-    AlertDialog(
-        onDismissRequest = { },
-        title = { Text("Updating Profile Picture") },
-        text = { CircularProgressIndicator() },
-        confirmButton = { }
-    )
-}
-
-@Composable
-fun ErrorDialog(
+private fun ErrorDialog(
     message: String,
     onDismiss: () -> Unit
 ) {

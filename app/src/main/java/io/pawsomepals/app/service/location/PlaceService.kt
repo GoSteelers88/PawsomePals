@@ -21,12 +21,7 @@ class PlaceService @Inject constructor(
     @ApplicationContext private val context: Context // Add this
 
 ) {
-    init {
-        // Initialize Places if not already initialized
-        if (!Places.isInitialized()) {
-            Places.initialize(context, remoteConfigManager.getMapsKey())
-        }
-    }
+
 
     suspend fun searchNearbyDogFriendlyPlaces(
         center: LatLng,

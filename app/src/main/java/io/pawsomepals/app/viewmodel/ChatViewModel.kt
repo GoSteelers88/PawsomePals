@@ -7,9 +7,14 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import dagger.hilt.android.lifecycle.HiltViewModel
 import io.pawsomepals.app.data.DataManager
 import io.pawsomepals.app.data.model.Chat
 import io.pawsomepals.app.data.model.CompatibilityPrompt
+import io.pawsomepals.app.data.model.DogFriendlyLocation
+import io.pawsomepals.app.data.model.MatchReason
 import io.pawsomepals.app.data.model.Message
 import io.pawsomepals.app.data.model.MessageType
 import io.pawsomepals.app.data.model.Notification
@@ -17,22 +22,23 @@ import io.pawsomepals.app.data.model.NotificationType
 import io.pawsomepals.app.data.model.Playdate
 import io.pawsomepals.app.data.model.PlaydateMood
 import io.pawsomepals.app.data.model.PlaydateStatus
+import io.pawsomepals.app.data.model.PromptType
 import io.pawsomepals.app.data.model.SafetyChecklist
 import io.pawsomepals.app.data.model.User
 import io.pawsomepals.app.data.preferences.UserPreferences
 import io.pawsomepals.app.data.repository.ChatRepository
+import io.pawsomepals.app.data.repository.MatchRepository
 import io.pawsomepals.app.data.repository.NotificationRepository
 import io.pawsomepals.app.data.repository.UserRepository
 import io.pawsomepals.app.service.AchievementService
 import io.pawsomepals.app.service.AnalyticsService
 import io.pawsomepals.app.service.CalendarService
 import io.pawsomepals.app.utils.DateUtils
-import com.google.firebase.auth.FirebaseAuth
-import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import java.util.UUID
 import javax.inject.Inject
 
@@ -47,13 +53,26 @@ class ChatViewModel @Inject constructor(
     private val notificationRepository: NotificationRepository,
     private val achievementService: AchievementService,
     private val analyticsService: AnalyticsService,
-    private val auth: FirebaseAuth  // Add this
+    private val auth: FirebaseAuth,
+    private val matchRepository: MatchRepository,
+    private val firestore: FirebaseFirestore, // Add this
+
+// Add this
 
 ) : ViewModel() {
 
     // UI State
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
+
+    private val _showLocationSearch = MutableStateFlow(false)
+    val showLocationSearch = _showLocationSearch.asStateFlow()
+
+    fun toggleLocationSearch() {
+        _showLocationSearch.value = !_showLocationSearch.value
+    }
+    private val _matchId = MutableStateFlow<String?>(null)
+    val matchId: StateFlow<String?> = _matchId.asStateFlow()
 
     private val _selectedMedia = MutableStateFlow<Uri?>(null)
     val selectedMedia: StateFlow<Uri?> = _selectedMedia.asStateFlow()
@@ -94,6 +113,11 @@ class ChatViewModel @Inject constructor(
     private val _todaysPlaydates = MutableStateFlow<List<Playdate>>(emptyList())
     val todaysPlaydates: StateFlow<List<Playdate>> = _todaysPlaydates
 
+    private val _chatsWithDetails = MutableStateFlow<List<Chat.ChatWithDetails>>(emptyList())
+    val chatsWithDetails: StateFlow<List<Chat.ChatWithDetails>> = _chatsWithDetails.asStateFlow()
+
+    private val _isLoadingChats = MutableStateFlow(false)
+    val isLoadingChats: StateFlow<Boolean> = _isLoadingChats.asStateFlow()
 
     // Safety & Compatibility
     private val _isFirstMeeting = MutableStateFlow(true)
@@ -105,26 +129,216 @@ class ChatViewModel @Inject constructor(
     private val _compatibilityPrompts = MutableStateFlow<List<CompatibilityPrompt>>(emptyList())
     val compatibilityPrompts: StateFlow<List<CompatibilityPrompt>> = _compatibilityPrompts
 
-    private var currentChatId: String? = null
+    var currentChatId: String? = null
 
     init {
         viewModelScope.launch {
-            _isUserLoggedIn.value = userRepository.isUserLoggedIn()
-            if (_isUserLoggedIn.value) {
-                loadChats()
+            try {
+                Log.d("ChatViewModel", "Initializing ChatViewModel")
+
+                // Set initial state
+                _isUserLoggedIn.value = auth.currentUser != null
+                Log.d("ChatViewModel", "Initial auth state: ${auth.currentUser != null}")
+
+                // Load chats if user is logged in
+                if (_isUserLoggedIn.value) {
+                    Log.d("ChatViewModel", "Loading chats for user: ${auth.currentUser?.uid}")
+                    loadChats()
+                }
+
+                // Set up continuous auth state listener
+                auth.addAuthStateListener { firebaseAuth ->
+                    viewModelScope.launch {
+                        val isLoggedIn = firebaseAuth.currentUser != null
+                        Log.d("ChatViewModel", "Auth state changed. isLoggedIn: $isLoggedIn")
+                        _isUserLoggedIn.value = isLoggedIn
+
+                        if (isLoggedIn) {
+                            loadChats()
+                        } else {
+                            _chats.value = emptyList()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "Error initializing ChatViewModel", e)
+                handleError("Error initializing chat", e)
             }
         }
     }
+
+
+    private fun generatePromptFromReason(reason: MatchReason): String {
+        return when(reason) {
+            MatchReason.ENERGY_LEVEL_MATCH -> "Would you like to discuss your dogs' favorite activities?"
+            MatchReason.SIZE_COMPATIBILITY -> "What kind of play style does your dog prefer?"
+            MatchReason.BREED_COMPATIBILITY -> "Do you have any breed-specific tips to share?"
+            MatchReason.PLAY_STYLE_MATCH -> "What are your dog's favorite games and toys?"
+            MatchReason.TRAINING_LEVEL_MATCH -> "How was your dog trained? Any tips to share?"
+            MatchReason.TEMPERAMENT_MATCH -> "How does your dog usually interact with new friends?"
+            MatchReason.SOCIAL_COMPATIBILITY -> "What social situations does your dog enjoy most?"
+            MatchReason.HEALTH_COMPATIBILITY -> "How do you maintain your dog's health and wellness?"
+            MatchReason.AGE_COMPATIBILITY -> "What activities suit your dog's age and energy?"
+            MatchReason.LOCATION_PROXIMITY -> "Do you have any favorite local dog parks?"
+        }
+    }
+
 
     // Chat List Management
     private fun loadChats() {
         viewModelScope.launch {
             try {
+                _isLoadingChats.value = true
+                Log.d("ChatViewModel", "Starting to load chats")
+
                 chatRepository.getAllChats().collect { chatsList ->
-                    _chats.value = chatsList
+                    Log.d("ChatViewModel", """
+                    Received chats from repository:
+                    - Count: ${chatsList.size}
+                    - Chat IDs: ${chatsList.map { it.id }}
+                """.trimIndent())
+
+                    val chatsWithDetails = chatsList.mapNotNull { chat ->
+                        try {
+                            val currentUserId = getCurrentUserIdOrNull()
+                            Log.d("ChatViewModel", "Processing chat ${chat.id} with current user: $currentUserId")
+
+                            if (currentUserId == null) {
+                                Log.e("ChatViewModel", "Current user ID is null")
+                                return@mapNotNull null
+                            }
+
+                            // Get match details
+                            val match = matchRepository.getMatchById(chat.matchId).getOrNull()
+                            Log.d("ChatViewModel", """
+                            Match details for chat ${chat.id}:
+                            - Match ID: ${match?.id}
+                            - Match found: ${match != null}
+                        """.trimIndent())
+
+                            if (match == null) {
+                                Log.e("ChatViewModel", "Match not found for chat ${chat.id}")
+                                return@mapNotNull null
+                            }
+
+                            // Get other user ID
+                            val otherUserId = if (match.user1Id == currentUserId) match.user2Id else match.user1Id
+                            Log.d("ChatViewModel", "Other user ID determined: $otherUserId")
+
+                            // Get other user info
+                            val otherUser = userRepository.getUserById(otherUserId)
+                            Log.d("ChatViewModel", "Other user found: ${otherUser != null}")
+
+                            if (otherUser == null) {
+                                Log.e("ChatViewModel", "Other user not found: $otherUserId")
+                                return@mapNotNull null
+                            }
+
+                            // Get dog profile
+                            val otherDog = userRepository.getDogProfileByOwnerId(otherUserId)
+                            Log.d("ChatViewModel", """
+                            Dog profile for user $otherUserId:
+                            - Found: ${otherDog != null}
+                            - Dog name: ${otherDog?.name}
+                        """.trimIndent())
+
+                            if (otherDog == null) {
+                                Log.e("ChatViewModel", "Dog not found for user: $otherUserId")
+                                return@mapNotNull null
+                            }
+
+                            Log.d("ChatViewModel", """
+                            Successfully processed chat ${chat.id}:
+                            - Other dog name: ${otherDog.name}
+                            - Owner ID: ${otherDog.ownerId}
+                        """.trimIndent())
+
+                            Chat.ChatWithDetails(
+                                chat = chat,
+                                otherDogPhotoUrl = otherDog.profilePictureUrl,
+                                otherDogName = otherDog.name,
+                                isNewMatch = match.chatCreatedAt?.let { createdAt ->
+                                    createdAt > System.currentTimeMillis() - (24 * 60 * 60 * 1000)
+                                } ?: false,
+                                pendingPlaydate = chat.playdateStatus == Chat.PlaydateStatus.PENDING_CONFIRMATION
+                            )
+                        } catch (e: Exception) {
+                            Log.e("ChatViewModel", "Error processing chat ${chat.id}", e)
+                            e.printStackTrace()
+                            null
+                        }
+                    }
+
+                    _chatsWithDetails.value = chatsWithDetails
+                    _isLoadingChats.value = false
+                    Log.d("ChatViewModel", """
+                    Chat loading completed:
+                    - Initial chats: ${chatsList.size}
+                    - Processed chats: ${chatsWithDetails.size}
+                    - Failed processing: ${chatsList.size - chatsWithDetails.size}
+                """.trimIndent())
                 }
             } catch (e: Exception) {
+                Log.e("ChatViewModel", "Error loading chats", e)
+                e.printStackTrace()
                 handleError("Error loading chats", e)
+                _isLoadingChats.value = false
+            }
+        }
+    }
+
+    fun getMatchIdForChat(chatId: String) {
+        viewModelScope.launch {
+            try {
+                val chat = firestore.collection("chats")
+                    .document(chatId)
+                    .get()
+                    .await()
+
+                _matchId.value = chat.getString("matchId")
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "Error getting match ID", e)
+                _matchId.value = null
+            }
+        }
+    }
+
+    private suspend fun getChatsWithDetails(): List<Chat.ChatWithDetails> {
+        return chats.value.map { chat ->
+            val currentUserId = getCurrentUserIdOrNull() ?: return@map Chat.ChatWithDetails(chat)
+            val otherDogId = chat.getOtherDogId(chat.dog1Id)
+            val otherDog = userRepository.getDogProfileById(otherDogId)
+
+            Chat.ChatWithDetails(
+                chat = chat,
+                otherDogPhotoUrl = otherDog?.profilePictureUrl,
+                otherDogName = otherDog?.name ?: "Unknown Dog",
+                isNewMatch = chat.created > System.currentTimeMillis() - (24 * 60 * 60 * 1000),
+                pendingPlaydate = chat.playdateStatus == Chat.PlaydateStatus.PENDING_CONFIRMATION
+            )
+        }
+    }
+
+    fun sendLocationMessage(location: DogFriendlyLocation) {
+        viewModelScope.launch {
+            try {
+                val currentUserId = userRepository.getCurrentUserId() ?: return@launch
+                chatRepository.sendMessage(
+                    chatId = currentChatId ?: return@launch,
+                    senderId = currentUserId,
+                    content = location.name,
+                    type = MessageType.LOCATION,
+                    metadata = mapOf(
+                        "locationName" to location.name,
+                        "address" to location.address,
+                        "coordinates" to "${location.latitude},${location.longitude}",
+                        "hasFencing" to location.hasFencing.toString(),
+                        "isOffLeashAllowed" to location.isOffLeashAllowed.toString()
+                    )
+                )
+                _showLocationSearch.value = false
+            } catch (e: Exception) {
+                handleError("Error sharing location", e)
             }
         }
     }
@@ -136,22 +350,53 @@ class ChatViewModel @Inject constructor(
     fun loadChatMessages(chatId: String) {
         currentChatId = chatId
         viewModelScope.launch {
+            Log.d("ChatViewModel", "Starting to load messages for chatId: $chatId")
             try {
                 chatRepository.getMessages(chatId).collect { messageList ->
+                    Log.d("ChatViewModel", "Received ${messageList.size} messages for chat $chatId: $messageList")
                     _messages.value = messageList
                 }
             } catch (e: Exception) {
-                handleError("Error loading messages", e)
+                Log.e("ChatViewModel", "Error loading messages", e)
+            }
+        }
+    }
+    fun deleteChat(chatId: String) {
+        viewModelScope.launch {
+            try {
+                chatRepository.deleteChat(chatId)
+                // Chats will be automatically reloaded through the flow
+            } catch (e: Exception) {
+                handleError("Error deleting chat", e)
             }
         }
     }
 
-    // Message Handling
+
     fun sendMessage(content: String, mediaUri: Uri? = null) {
         val chatId = currentChatId ?: return
         viewModelScope.launch {
             try {
-                val senderId = userRepository.getCurrentUserId() ?: return@launch
+                val currentUser = auth.currentUser ?: return@launch
+                val senderId = currentUser.uid
+                val timestamp = System.currentTimeMillis()
+
+                // Create message ID using same format as repository
+                val messageId = "${chatId}_${timestamp}_${senderId}"
+
+                // Create optimistic message
+                val optimisticMessage = Message(
+                    id = messageId,
+                    chatId = chatId,
+                    senderId = senderId,
+                    senderName = currentUser.displayName ?: "Anonymous",
+                    content = content,
+                    timestamp = timestamp,
+                    isFromCurrentUser = true
+                )
+
+                // Add optimistic message to UI immediately
+                _messages.value = _messages.value + optimisticMessage
 
                 if (mediaUri != null) {
                     sendMediaMessage(chatId, senderId, mediaUri)
@@ -159,18 +404,35 @@ class ChatViewModel @Inject constructor(
                     chatRepository.sendMessage(
                         chatId = chatId,
                         senderId = senderId,
-                        content = content
+                        content = content,
+                        type = MessageType.TEXT
                     )
                 }
             } catch (e: Exception) {
+                // Remove optimistic message if send fails
+                _messages.value = _messages.value.filterNot { it.id == "${chatId}_${System.currentTimeMillis()}_${auth.currentUser?.uid}" }
                 handleError("Error sending message", e)
             }
+        }
+    }
+
+
+
+    private fun promptTypeFromReason(reason: MatchReason): PromptType {
+        return when(reason) {
+            MatchReason.BREED_COMPATIBILITY -> PromptType.BREED_INFO
+            MatchReason.TRAINING_LEVEL_MATCH -> PromptType.TRAINING_TIP
+            MatchReason.HEALTH_COMPATIBILITY -> PromptType.HEALTH_TIP
+            else -> PromptType.PLAY_STYLE
         }
     }
 
     private suspend fun sendMediaMessage(chatId: String, senderId: String, mediaUri: Uri) {
         _isMediaUploading.value = true
         try {
+            val timestamp = System.currentTimeMillis()
+            val messageId = "${chatId}_${timestamp}_${senderId}"
+
             val mediaUrl = dataManager.uploadChatMedia(chatId, mediaUri)
             chatRepository.sendMessage(
                 chatId = chatId,
@@ -489,6 +751,7 @@ class ChatViewModel @Inject constructor(
     fun clearSelectedMedia() {
         _selectedMedia.value = null
     }
+
 
     // Chat Status
     fun setTyping(isTyping: Boolean) {

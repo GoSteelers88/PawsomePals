@@ -20,6 +20,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,6 +31,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import io.pawsomepals.app.R
+import io.pawsomepals.app.Screen
+import io.pawsomepals.app.auth.AuthStateManager
 import io.pawsomepals.app.viewmodel.ChatViewModel
 import io.pawsomepals.app.viewmodel.DogProfileViewModel
 import io.pawsomepals.app.viewmodel.HealthAdvisorViewModel
@@ -44,7 +48,7 @@ import io.pawsomepals.app.viewmodel.SwipingViewModel
 @Composable
 fun MainScreen(
     navController: NavController,
-    username: String,
+    authStateManager: AuthStateManager,  // Add this
     profileViewModel: ProfileViewModel,
     dogProfileViewModel: DogProfileViewModel,
     playdateViewModel: PlaydateViewModel,
@@ -72,6 +76,21 @@ fun MainScreen(
     onPlaydateRequestsClick: () -> Unit
 ) {
     var showLogoutDialog by remember { mutableStateOf(false) }
+    val currentRoute by navController.currentBackStackEntryFlow.collectAsState(initial = null)
+    LaunchedEffect(currentRoute) {
+        currentRoute?.destination?.route?.let { route ->
+            when (route) {
+                Screen.MainScreen.route -> {
+                    // Main screen init logic if needed
+                }
+            }
+        }
+    }
+    val username by authStateManager.username.collectAsState()
+
+
+
+
 
     Scaffold(
         topBar = {
@@ -177,7 +196,10 @@ fun MainScreen(
                     )
                     MainScreenButtonLarge(
                         text = "Schedule",
-                        onClick = onSchedulePlaydateClick,
+                        onClick = {
+                            // This will create a new scheduling flow
+                            onSchedulePlaydateClick()  // This maps to navigateWithSingleTop(Screen.Playdate)
+                        },
                         iconResId = R.drawable.ic_calendar,
                         modifier = Modifier.weight(1f)
                     )
@@ -277,6 +299,7 @@ fun MainScreen(
             )
         }
     }
+
 }
 
 @Composable
